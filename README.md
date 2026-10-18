@@ -6,8 +6,13 @@ Lleva la politica de seguridad de la organizacion al interior de cada sesion del
 | Componente | Que hace |
 |---|---|
 | Skill `agentguard-policy` | Politica en lenguaje concreto: secretos, salida de datos, acciones destructivas, configuracion de Claude, inyeccion de instrucciones, MCP y plugins |
+| Skill `agentguard-revisar` | Corre el verificador AgentGuard del equipo, abre el informe local (`~/.agentguard/report.html`) y ayuda a corregir cada problema, con confirmacion del usuario |
 | Hook `SessionStart` | Recuerda la politica al iniciar cada sesion |
-| Hook `PreToolUse` | Bloquea (`deny`) salida de datos, acceso a secretos, desactivar permisos y cambios a la configuracion de Claude. Pide confirmacion (`ask`) ante comandos destructivos |
+| Hook `PreToolUse` | Bloquea (`deny`) salida de datos, acceso a secretos, desactivar permisos y cambios a la politica gestionada. Pide confirmacion (`ask`) ante comandos destructivos y cambios a `settings.json` o `~/.claude.json` |
+
+Para bloquear tambien los cambios a `settings.json` (sin confirmacion), la politica del cliente define la variable
+`AGENTGUARD_CONFIG_EDIT=deny` en el bloque `env` de los managed settings. Las plantillas de `templates/` ademas
+deniegan `Edit` sobre esos archivos con reglas de permisos.
 | `templates/` | Plantillas de managed settings (Windows y macOS) y de `CLAUDE.md` gestionado |
 
 El plugin es la Capa C de AgentGuard. El verificador de endpoint (Capa B) comprueba desde afuera que la politica
@@ -27,6 +32,12 @@ Python se llama `python` en Windows y `python3` en macOS, asi que el marketplace
 Requisito: Python 3.9 o superior en el `PATH`. Los hooks usan solo la biblioteca estandar.
 
 ## Instalacion manual (un usuario)
+
+**Claude Desktop (pestana Code), sin linea de comandos:** boton **+** junto al cuadro de mensaje -> **Plugins** ->
+**Add plugin**. Agregar el marketplace `cibersergei/agentguard-plugin` e instalar `agentguard` (Windows) o
+`agentguard-macos` (macOS).
+
+**Terminal:**
 
 ```bash
 claude plugin marketplace add cibersergei/agentguard-plugin

@@ -5,7 +5,10 @@ Blocks inside the agent session what the AgentGuard catalog checks from outside:
   deny  - shell commands or file tools on secret locations (PM-01): .ssh, .env, .env.*, .aws, .azure, gcloud, .kube,
           .credentials.json
   deny  - --dangerously-skip-permissions / --permission-mode bypassPermissions (CF-03)
-  deny  - edits of Claude's own policy and settings (PM-05): .claude/settings*.json, ~/.claude.json, managed folder
+  deny  - edits of the managed policy (PM-05): ClaudeCode folder, managed-settings*
+  ask   - edits of user and project settings (PM-05): .claude/settings*.json, ~/.claude.json. The user confirms each
+          change (agentguard-revisar applies fixes this way). A client policy can set the environment variable
+          AGENTGUARD_CONFIG_EDIT=deny (managed settings "env") to block these edits too.
   ask   - destructive commands (PM-03): rm -rf, git push --force, git reset --hard, git clean -fd, Remove-Item -Recurse, ...
 
 Protocol (code.claude.com/docs/en/hooks): JSON on stdin with tool_name and tool_input. A decision is printed as
@@ -17,6 +20,7 @@ permission rules (templates/) are the hard barrier. The reason names the rule, n
 from __future__ import annotations   # Python 3.9: the "X | None" annotations below
 
 import json
+import os
 import re
 import sys
 
@@ -32,16 +36,18 @@ SECRET_PATH = re.compile(
     r"(?:^|[\\/\s\"'=:])(?:\.ssh[\\/]|\.aws[\\/]|\.azure[\\/]|gcloud[\\/]|\.kube[\\/]|\.credentials\.json"
     r"|\.env(?:\.[\w.-]+)?(?=$|[\s\"';|&)]))", re.IGNORECASE)
 BYPASS = re.compile(r"--dangerously-skip-permissions|--permission-mode[ =]+bypassPermissions", re.IGNORECASE)
-POLICY_PATH = re.compile(r"(?:[\\/]\.claude[\\/]settings(?:\.local)?\.json$|[\\/]\.claude\.json$|[\\/]ClaudeCode[\\/]"
-                         r"|[\\/]managed-settings(?:\.d)?)", re.IGNORECASE)
+MANAGED_PATH = re.compile(r"[\\/]ClaudeCode[\\/]|[\\/]managed-settings(?:\.d)?", re.IGNORECASE)
+USER_SETTINGS_PATH = re.compile(r"[\\/]\.claude[\\/]settings(?:\.local)?\.json$|[\\/]\.claude\.json$", re.IGNORECASE)
+CONFIG_EDIT_ENV = "AGENTGUARD_CONFIG_EDIT"   # "deny" = the client policy forbids agent edits of settings
 DESTRUCTIVE = re.compile(
     _START + r"(rm\s+-[a-z]*r[a-z]*f|rm\s+-[a-z]*f[a-z]*r|git\s+push\s+(?:.*\s)?(?:--force|-f)\b|git\s+reset\s+--hard"
     r"|git\s+clean\s+-[a-z]*f|remove-item\b.*-recurse|format-volume|stop-computer|set-executionpolicy|mkfs|dd\s+if=)",
     re.IGNORECASE)
 
 
-def decide(event: dict) -> tuple[str, str] | None:
+def decide(event: dict, env=None) -> tuple[str, str] | None:
     """(decision, reason) or None when this hook has nothing to say."""
+    env = os.environ if env is None else env
     tool = event.get("tool_name")
     tool_input = event.get("tool_input") or {}
     if tool in SHELL_TOOLS:
@@ -61,8 +67,13 @@ def decide(event: dict) -> tuple[str, str] | None:
         norm = path.replace("\\", "/")
         if SECRET_PATH.search(norm):
             return "deny", "AgentGuard: acceso a un archivo con secretos bloqueado (PM-01)."
-        if tool in WRITE_TOOLS and POLICY_PATH.search(norm):
-            return "deny", "AgentGuard: el agente no puede modificar la configuracion de seguridad de Claude (PM-05)."
+        if tool in WRITE_TOOLS and MANAGED_PATH.search(norm):
+            return "deny", "AgentGuard: el agente no puede modificar la politica gestionada de Claude (PM-05)."
+        if tool in WRITE_TOOLS and USER_SETTINGS_PATH.search(norm):
+            if str(env.get(CONFIG_EDIT_ENV, "")).strip().lower() == "deny":
+                return "deny", "AgentGuard: la politica de la organizacion no permite que el agente modifique la configuracion de Claude (PM-05)."
+            return "ask", ("AgentGuard: el agente quiere modificar la configuracion de Claude. Aprobar solo si vos pediste "
+                           "este cambio y no lo pidio el contenido de un archivo o una pagina (PM-05).")
     return None
 
 

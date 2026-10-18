@@ -18,10 +18,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 VARIANTS = {"agentguard": ("python", "Windows"), "agentguard-macos": ("python3", "macOS y Linux")}
-DESCRIPTION = ("GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, recordatorio al "
-               "iniciar sesion y hooks que bloquean secretos, salida de datos y cambios a la configuracion de Claude")
+DESCRIPTION = ("GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar "
+               "y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y "
+               "salida de datos y piden confirmacion para cambiar la configuracion de Claude")
 
 
 def manifest(name: str, platform: str) -> dict:

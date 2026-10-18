@@ -8,14 +8,14 @@
     {
       "name": "agentguard",
       "source": "./plugins/agentguard",
-      "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, recordatorio al iniciar sesion y hooks que bloquean secretos, salida de datos y cambios a la configuracion de Claude. Variante Windows.",
-      "version": "0.1.0"
+      "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y salida de datos y piden confirmacion para cambiar la configuracion de Claude. Variante Windows.",
+      "version": "0.2.0"
     },
     {
       "name": "agentguard-macos",
       "source": "./plugins/agentguard-macos",
-      "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, recordatorio al iniciar sesion y hooks que bloquean secretos, salida de datos y cambios a la configuracion de Claude. Variante macOS y Linux.",
-      "version": "0.1.0"
+      "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y salida de datos y piden confirmacion para cambiar la configuracion de Claude. Variante macOS y Linux.",
+      "version": "0.2.0"
     }
   ]
 }

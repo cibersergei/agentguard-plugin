@@ -50,10 +50,19 @@ class DenyTest(unittest.TestCase):
         self.assertIn("CF-03", hook.decide(shell("claude --dangerously-skip-permissions"))[1])
         self.assertEqual(decision(shell("claude --permission-mode bypassPermissions")), "deny")
 
-    def test_agent_cannot_edit_claude_policy(self):
-        for path in ["C:\\repo\\.claude\\settings.json", "/repo/.claude/settings.local.json", "C:\\Users\\d\\.claude.json",
-                     "C:\\Program Files\\ClaudeCode\\managed-settings.json", "/Library/Application Support/ClaudeCode/CLAUDE.md"]:
+    def test_agent_cannot_edit_the_managed_policy(self):
+        for path in ["C:\\Program Files\\ClaudeCode\\managed-settings.json", "/Library/Application Support/ClaudeCode/CLAUDE.md",
+                     "C:\\Program Files\\ClaudeCode\\managed-settings.d\\10-it.json"]:
             self.assertEqual(decision(file_op(path, "Write")), "deny", path)
+
+    def test_user_settings_edits_ask_unless_the_client_policy_denies(self):
+        paths = ["C:\\repo\\.claude\\settings.json", "/repo/.claude/settings.local.json", "C:\\Users\\d\\.claude.json",
+                 "C:\\Users\\d\\.claude\\settings.json"]
+        for path in paths:
+            self.assertEqual(decision(file_op(path, "Edit")), "ask", path)
+            denied = hook.decide(file_op(path, "Write"), env={"AGENTGUARD_CONFIG_EDIT": "DENY"})
+            self.assertEqual(denied[0], "deny", path)
+            self.assertIn("PM-05", denied[1])
         self.assertIsNone(decision(file_op("C:\\repo\\.claude\\settings.json", "Read")))   # reading is fine
 
 
