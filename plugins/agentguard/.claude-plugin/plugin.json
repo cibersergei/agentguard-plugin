@@ -1,0 +1,16 @@
+{
+  "name": "agentguard",
+  "displayName": "GenIA AgentGuard (Windows)",
+  "version": "0.1.0",
+  "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, recordatorio al iniciar sesion y hooks que bloquean secretos, salida de datos y cambios a la configuracion de Claude",
+  "author": {
+    "name": "IMR Consulting"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/cibersergei/agentguard-plugin",
+  "keywords": [
+    "security",
+    "governance",
+    "agentguard"
+  ]
+}
