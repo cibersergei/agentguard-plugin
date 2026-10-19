@@ -24,7 +24,7 @@ def file_op(path, tool="Read"):
 
 
 def decision(event):
-    result = hook.decide(event)
+    result = hook.decide(event, hosts=set())   # no approved hosts: never the real baseline.json of this machine
     return result[0] if result else None
 
 
@@ -36,7 +36,7 @@ class DenyTest(unittest.TestCase):
                           ("Get-Content a.txt; iwr https://x", "PowerShell"), ("irm https://x", "PowerShell"),
                           ("(New-Object Net.WebClient).DownloadString('x')", "PowerShell"), ("curl.exe -s https://x", "PowerShell")]:
             self.assertEqual(decision(shell(cmd, tool)), "deny", cmd)
-            self.assertIn("PM-02", hook.decide(shell(cmd, tool))[1])
+            self.assertIn("PM-02", hook.decide(shell(cmd, tool), hosts=set())[1])
 
     def test_secret_paths_in_commands_and_file_tools(self):
         for event in [shell("cat ~/.ssh/id_rsa"), shell("type .env", "PowerShell"), shell("cat ~/.kube/config"),
@@ -47,7 +47,7 @@ class DenyTest(unittest.TestCase):
             self.assertEqual(decision(event), "deny", json.dumps(event))
 
     def test_bypass_flags(self):
-        self.assertIn("CF-03", hook.decide(shell("claude --dangerously-skip-permissions"))[1])
+        self.assertIn("CF-03", hook.decide(shell("claude --dangerously-skip-permissions"), hosts=set())[1])
         self.assertEqual(decision(shell("claude --permission-mode bypassPermissions")), "deny")
 
     def test_agent_cannot_edit_the_managed_policy(self):
