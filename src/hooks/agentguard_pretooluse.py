@@ -1,7 +1,7 @@
 """GenIA AgentGuard - PreToolUse hook (Capa C). Python standard library only, Python 3.9+.
 
 Blocks inside the agent session what the AgentGuard catalog checks from outside:
-  deny  - shell commands that send data out (PM-02): curl, wget, scp, sftp, nc, Invoke-WebRequest, iwr, irm, ...
+  deny  - shell commands that send data out (PM-02): curl, wget, scp, sftp, ssh, nc, Invoke-WebRequest, iwr, irm, ...
           except scp / sftp / ssh to the organization's approved transfer hosts, curl / wget / Invoke-WebRequest to its
           approved web hosts, and nc when the organization allows it (agentguard_allowlist, baseline.json); the agent
           cannot edit or read those lists
@@ -35,7 +35,7 @@ FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 _START = r"(?:^|[;&|\n(`]\s*|\b(?:sudo|exec|xargs|env)\s+)"
-EGRESS = re.compile(_START + r"(curl|wget|scp|sftp|ftp|nc|ncat|netcat|invoke-webrequest|iwr|invoke-restmethod|irm"
+EGRESS = re.compile(_START + r"(curl|wget|scp|sftp|ssh(?!-)|ftp|nc|ncat|netcat|invoke-webrequest|iwr|invoke-restmethod|irm"
                     r"|start-bitstransfer)(?:\.exe)?\b", re.IGNORECASE)
 WEBCLIENT = re.compile(r"new-object\s+(system\.)?net\.webclient", re.IGNORECASE)
 SECRET_PATH = re.compile(
