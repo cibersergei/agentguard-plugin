@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 HOST = re.compile(r"^(\*\.)?[a-z0-9](?:[a-z0-9-]{0,62})(?:\.[a-z0-9](?:[a-z0-9-]{0,62}))*$")
-SPLIT = re.compile(r"&&|\|\||[;&|\n]")
 WRAPPERS = {"sudo", "exec", "env", "nohup", "time", "command", "&"}
 TOOLS = {"scp", "sftp", "ssh"}
 WITH_VALUE = {"scp": set("cDFiJloPSX"), "sftp": set("BbcDFiJloPRSsX"), "ssh": set("BbcDEeFIiJLlmOoPpQRSWw")}
@@ -127,15 +126,47 @@ def parse(segment: str) -> dict | None:
     return {"hosts": hosts, "keys": keys, "ok": ok and bool(hosts)}
 
 
+def segments(command: str) -> list[str]:
+    """Split a command line into commands at ; && || | & and newlines that are OUTSIDE quotes. `2>&1` and `&>` are
+    redirections, not separators."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(command):
+                cur.append(command[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch in ";|\n" or (ch == "&" and not (i and command[i - 1] == ">") and command[i + 1:i + 2] != ">"):
+            out.append("".join(cur))
+            cur = []
+            if command[i:i + 2] in ("&&", "||"):
+                i += 1
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return [s.strip() for s in out if s.strip()]
+
+
+# Inside quotes these still run a command on THIS machine: never approved (fail closed)
+LOCAL_EXEC = re.compile(r"\$\(|`|<\(|>\(")
+
+
 def strip_approved(command: str, hosts: set[str]) -> tuple[str, str]:
     """(text for the egress check, text for the secret-path check). An approved scp/sftp/ssh leaves the egress text,
     and its -i key leaves the secret text; everything else stays, so the usual rules still apply to it."""
     if not hosts:
         return command, command
     egress_parts, secret_parts = [], []
-    for segment in (s.strip() for s in SPLIT.split(command)):   # stripped: the egress rule anchors at the start
+    for segment in segments(command):   # stripped: the egress rule anchors at the start
         info = parse(segment)
-        if info and info["ok"] and all(approved(h, hosts) for h in info["hosts"]):
+        if info and info["ok"] and not LOCAL_EXEC.search(segment) and all(approved(h, hosts) for h in info["hosts"]):
             secret = segment
             for key in info["keys"]:
                 if re.search(r"[\\/]\.ssh[\\/]", key.replace("~", "/")):
