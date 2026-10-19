@@ -2,8 +2,9 @@
 
 Blocks inside the agent session what the AgentGuard catalog checks from outside:
   deny  - shell commands that send data out (PM-02): curl, wget, scp, sftp, nc, Invoke-WebRequest, iwr, irm, ...
-          except scp / sftp / ssh to the organization's approved transfer hosts (agentguard_allowlist, baseline.json);
-          the agent cannot edit or read those lists
+          except scp / sftp / ssh to the organization's approved transfer hosts, curl / wget / Invoke-WebRequest to its
+          approved web hosts, and nc when the organization allows it (agentguard_allowlist, baseline.json); the agent
+          cannot edit or read those lists
   deny  - shell commands or file tools on secret locations (PM-01): .ssh, .env, .env.*, .aws, .azure, gcloud, .kube,
           .credentials.json
   deny  - --dangerously-skip-permissions / --permission-mode bypassPermissions (CF-03)
@@ -38,7 +39,7 @@ EGRESS = re.compile(_START + r"(curl|wget|scp|sftp|ftp|nc|ncat|netcat|invoke-web
                     r"|start-bitstransfer)(?:\.exe)?\b", re.IGNORECASE)
 WEBCLIENT = re.compile(r"new-object\s+(system\.)?net\.webclient", re.IGNORECASE)
 SECRET_PATH = re.compile(
-    r"(?:^|[\\/\s\"'=:])(?:\.ssh[\\/]|\.aws[\\/]|\.azure[\\/]|gcloud[\\/]|\.kube[\\/]|\.credentials\.json"
+    r"(?:^|[\\/\s\"'=:@])(?:\.ssh[\\/]|\.aws[\\/]|\.azure[\\/]|gcloud[\\/]|\.kube[\\/]|\.credentials\.json"
     r"|\.env(?:\.[\w.-]+)?(?=$|[\s\"';|&)]))", re.IGNORECASE)
 BYPASS = re.compile(r"--dangerously-skip-permissions|--permission-mode[ =]+bypassPermissions", re.IGNORECASE)
 MANAGED_PATH = re.compile(r"[\\/]ClaudeCode[\\/]|[\\/]managed-settings(?:\.d)?", re.IGNORECASE)
