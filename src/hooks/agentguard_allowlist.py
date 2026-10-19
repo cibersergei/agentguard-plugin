@@ -31,7 +31,9 @@ REMOTE = re.compile(r"^(?:[^@\s]+@)?(\[[^\]]+\]|[^:/\\\s]+):")
 URI = re.compile(r"^(?:scp|sftp|ssh)://(?:[^@/]+@)?(\[[^\]]+\]|[^:/]+)", re.IGNORECASE)
 URL = re.compile(r"^(?:https?|ftps?)://(?:[^@/?#]+@)?(\[[^\]]+\]|[^:/?#]+)", re.IGNORECASE)
 RISKY_OPTION = re.compile(r"proxycommand|localcommand|permitlocalcommand", re.IGNORECASE)
-LIST_FILES = re.compile(r"allow-hosts\.json|agentguard(?:[\\/]| baseline[\\/])baseline\.json", re.IGNORECASE)
+USER_LIST = re.compile(r"allow-hosts\.json", re.IGNORECASE)   # the user (and so the agent) can write it
+ORG_LIST = re.compile(r"agentguard(?:[\\/]| baseline[\\/])baseline\.json", re.IGNORECASE)   # admin/SYSTEM only
+LIST_FILES = re.compile(f"{USER_LIST.pattern}|{ORG_LIST.pattern}", re.IGNORECASE)
 LOCAL_EXEC = re.compile(r"\$\(|`|<\(|>\(")   # inside quotes these still run a command on THIS machine
 # Web tool options whose next token is a value (not a URL), and options that route or configure the request elsewhere
 CURL_VALUE = {"-o", "--output", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "--json", "-H", "--header",

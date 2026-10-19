@@ -4,7 +4,10 @@ Blocks inside the agent session what the AgentGuard catalog checks from outside:
   deny  - shell commands that send data out (PM-02): curl, wget, scp, sftp, ssh, nc, Invoke-WebRequest, iwr, irm, ...
           except scp / sftp / ssh to the organization's approved transfer hosts, curl / wget / Invoke-WebRequest to its
           approved web hosts, and nc when the organization allows it (agentguard_allowlist, baseline.json); the agent
-          cannot edit or read those lists
+          cannot edit those lists. It may read them with the Read tool (no secrets: hosts and client parameters).
+          A shell command cannot be told apart as read or write, so one that names the user's allow-hosts.json is
+          denied (the agent could approve its own hosts) and one that names baseline.json asks (only admins and
+          SYSTEM can write it)
   deny  - shell commands or file tools on secret locations (PM-01): .ssh, .env, .env.*, .aws, .azure, gcloud, .kube,
           .credentials.json
   deny  - --dangerously-skip-permissions / --permission-mode bypassPermissions (CF-03)
@@ -61,8 +64,8 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
         command = str(tool_input.get("command") or "")
         if BYPASS.search(command):
             return "deny", "AgentGuard: no se permite desactivar los permisos de Claude Code (CF-03)."
-        if allowlist.LIST_FILES.search(command):
-            return "deny", "AgentGuard: el agente no puede leer ni cambiar la lista de hosts aprobados (PM-02)."
+        if allowlist.USER_LIST.search(command):
+            return "deny", "AgentGuard: el agente no puede cambiar la lista de hosts aprobados (PM-02)."
         hosts = allowlist.load() if hosts is None else hosts
         egress_text, secret_text = allowlist.strip_approved(command, hosts)
         match = EGRESS.search(egress_text)
@@ -73,6 +76,8 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
             return "deny", "AgentGuard: el comando usa una ruta con secretos (PM-01)."
         if DESTRUCTIVE.search(command):
             return "ask", "AgentGuard: comando destructivo. Confirmar solo si es intencional (PM-03)."
+        if allowlist.ORG_LIST.search(command):   # after the deny checks, so it never hides one
+            return "ask", "AgentGuard: el comando usa la lista de hosts aprobados. Para leerla, usar la herramienta Read (PM-02)."
     elif tool in FILE_TOOLS:
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         norm = path.replace("\\", "/")
