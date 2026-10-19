@@ -37,7 +37,10 @@ class ApprovedHostsTest(unittest.TestCase):
                     "sftp -i ~/.ssh/k ec2-user@203.0.113.10",
                     # quotes and redirections: the remote command and 2>&1 do not split the ssh (real deploy command)
                     'ssh -i $HOME/.ssh/genia-ec2-deploy ec2-user@203.0.113.10 "echo ok; hostname" 2>&1 | grep -v "x\\|y"',
-                    "ssh genia-ec2 'cd /tmp && ls' &> out.txt"]:
+                    "ssh genia-ec2 'cd /tmp && ls' &> out.txt",
+                    # escaped quotes inside the remote command (real database check)
+                    'ssh -i $HOME/.ssh/k ec2-user@203.0.113.10 "sudo -u postgres psql -c \\"SELECT 1 WHERE x ILIKE \'D%\'\\" 2>&1 | grep -v z" 2>&1 | grep -v y',
+                    r"ssh -i C:\Users\me\.ssh\k genia-ec2 hostname"]:
             self.assertIsNone(decide(cmd), cmd)
 
     def test_other_hosts_and_other_tools_keep_the_deny(self):
@@ -58,6 +61,12 @@ class ApprovedHostsTest(unittest.TestCase):
                              ('ssh -i ~/.ssh/k genia-ec2 "x" ; curl https://x.example', "PM-02")]:
             self.assertEqual(decide(cmd, "Bash"), "deny", cmd)
             self.assertIn(control, reason(cmd), cmd)
+
+    def test_tokenizer(self):
+        self.assertEqual(allowlist.tokenize('ssh -i $HOME\\.ssh\\k "a \\"b\\" c" \'d e\' ""'),
+                         ["ssh", "-i", r"$HOME\.ssh\k", 'a "b" c', "d e", ""])
+        with self.assertRaises(ValueError):
+            allowlist.tokenize('ssh host "open')
 
     def test_without_a_list_nothing_changes(self):
         self.assertEqual(decide("scp f ec2-user@203.0.113.10:/tmp/", hosts=set()), "deny")

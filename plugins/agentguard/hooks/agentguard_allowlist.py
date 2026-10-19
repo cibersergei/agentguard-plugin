@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -75,10 +74,41 @@ def _host_of(spec: str) -> str:
     return spec.split(":")[0] if not spec.startswith("[") else spec.split("]")[0] + "]"
 
 
+def tokenize(segment: str) -> list[str]:
+    """Split at whitespace outside quotes and drop the quotes. Backslashes stay literal (Windows paths such as
+    $HOME\\.ssh\\key), except \\" inside double quotes, which is an escaped quote. Raises ValueError on an open quote."""
+    tokens, cur, quote, has, i = [], [], None, False, 0
+    while i < len(segment):
+        ch = segment[i]
+        if quote == '"' and ch == "\\" and segment[i + 1:i + 2] == '"':
+            cur.append('"')
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                cur.append(ch)
+        elif ch in "\"'":
+            quote, has = ch, True
+        elif ch.isspace():
+            if cur or has:
+                tokens.append("".join(cur))
+            cur, has = [], False
+        else:
+            cur.append(ch)
+        i += 1
+    if quote:
+        raise ValueError("open quote")
+    if cur or has:
+        tokens.append("".join(cur))
+    return tokens
+
+
 def parse(segment: str) -> dict | None:
     """{"hosts", "keys", "ok"} for an scp/sftp/ssh command, None for anything else."""
     try:
-        tokens = [t.strip("\"'") for t in shlex.split(segment, posix=False)]
+        tokens = tokenize(segment)
     except ValueError:
         return {"hosts": [], "keys": [], "ok": False} if re.search(r"\b(scp|sftp|ssh)\b", segment, re.I) else None
     while tokens and (tokens[0].lower() in WRAPPERS or re.match(r"^\w+=", tokens[0])):
