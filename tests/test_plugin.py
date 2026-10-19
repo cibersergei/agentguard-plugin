@@ -98,11 +98,15 @@ class ProcessTest(unittest.TestCase):
             res = self.run_script(HOOK, stdin)
             self.assertEqual((res.returncode, res.stdout), (0, ""))
 
-    def test_session_reminder(self):
-        res = self.run_script(SESSION, json.dumps({"hook_event_name": "SessionStart", "source": "startup"}))
+    def test_session_shows_the_version_to_the_user_and_reminds_the_policy(self):
+        built = ROOT / "plugins" / "agentguard" / "hooks" / "agentguard_session.py"
+        res = self.run_script(built, json.dumps({"hook_event_name": "SessionStart", "source": "startup"}))
+        out = json.loads(res.stdout)
+        manifest = json.loads((ROOT / "plugins" / "agentguard" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(res.returncode, 0)
-        self.assertIn("AgentGuard", res.stdout)
-        self.assertIn("agentguard-policy", res.stdout)
+        self.assertIn(f"AgentGuard {manifest['version']} activo", out["systemMessage"])   # shown to the user
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertIn("agentguard-policy", out["hookSpecificOutput"]["additionalContext"])
 
 
 class BuildTest(unittest.TestCase):

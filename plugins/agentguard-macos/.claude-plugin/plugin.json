@@ -1,7 +1,7 @@
 {
   "name": "agentguard-macos",
   "displayName": "GenIA AgentGuard (macOS y Linux)",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y salida de datos y piden confirmacion para cambiar la configuracion de Claude",
   "author": {
     "name": "IMR Consulting"
