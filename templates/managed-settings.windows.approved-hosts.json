@@ -1,0 +1,99 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(.claude/settings.json)",
+      "Edit(.claude/settings.local.json)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(nc *)",
+      "Bash(ncat *)",
+      "Bash(ftp *)",
+      "WebFetch",
+      "Read(~/AppData/Roaming/gcloud/**)",
+      "PowerShell(Invoke-WebRequest *)",
+      "PowerShell(Invoke-RestMethod *)",
+      "PowerShell(Start-BitsTransfer *)"
+    ],
+    "ask": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -fd*)",
+      "Bash(sudo *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Format-Volume *)",
+      "PowerShell(Stop-Computer *)",
+      "PowerShell(Set-ExecutionPolicy *)"
+    ],
+    "allow": [
+      "WebFetch(domain:<dominio-aprobado>)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git fetch *)",
+      "Bash(git rev-parse *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(sftp *)"
+    ]
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowedMcpServers": [
+    {
+      "serverName": "<server-aprobado>"
+    }
+  ],
+  "enableAllProjectMcpServers": false,
+  "strictKnownMarketplaces": [
+    {
+      "source": "github",
+      "repo": "cibersergei/agentguard-plugin"
+    }
+  ],
+  "extraKnownMarketplaces": {
+    "imr-agentguard": {
+      "source": {
+        "source": "github",
+        "repo": "cibersergei/agentguard-plugin"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "agentguard@imr-agentguard": true
+  },
+  "disableCommandPluginSources": true,
+  "disableSideloadFlags": true,
+  "strictPluginOnlyCustomization": [
+    "hooks",
+    "mcp"
+  ],
+  "forceLoginMethod": "claudeai",
+  "forceLoginOrgUUID": [
+    "<uuid-de-la-organizacion>"
+  ],
+  "requiredMinimumVersion": "2.1.179",
+  "cleanupPeriodDays": 30,
+  "desktopSessionCleanupPeriodDays": 30,
+  "env": {
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"
+  }
+}

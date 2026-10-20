@@ -36,6 +36,26 @@ import agentguard_allowlist as allowlist  # noqa: E402
 SHELL_TOOLS = {"Bash", "PowerShell"}
 FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# 0.4.5 temporary diagnostic: with this file present, the name of every tool the hook sees (never its input) is
+# appended to the log, to learn the tools of Cowork. Delete the file to stop it. 0.4.6 removes this.
+DIAG_FLAG = os.path.join(".agentguard", "diagnostico-herramientas")
+DIAG_LOG = os.path.join(".agentguard", "herramientas-vistas.log")
+DIAG_MAX_BYTES = 200_000
+
+
+def diagnostic(tool) -> None:
+    home = os.path.expanduser("~")
+    if not os.path.exists(os.path.join(home, DIAG_FLAG)):
+        return
+    log = os.path.join(home, DIAG_LOG)
+    try:
+        if os.path.exists(log) and os.path.getsize(log) > DIAG_MAX_BYTES:
+            return
+        import time
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {str(tool)[:120]}\n")
+    except OSError:
+        pass
 
 _START = r"(?:^|[;&|\n(`]\s*|\b(?:sudo|exec|xargs|env)\s+)"
 EGRESS = re.compile(_START + r"(curl|wget|scp|sftp|ssh(?!-)|ftp|nc|ncat|netcat|invoke-webrequest|iwr|invoke-restmethod|irm"
@@ -59,6 +79,7 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
     hosts: approved transfer hosts; by default read from the organization's baseline.json (agentguard_allowlist)."""
     env = os.environ if env is None else env
     tool = event.get("tool_name")
+    diagnostic(tool)
     tool_input = event.get("tool_input") or {}
     if tool in SHELL_TOOLS:
         command = str(tool_input.get("command") or "")

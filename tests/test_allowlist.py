@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from unittest import mock
@@ -213,6 +214,24 @@ class ConfigEditTest(unittest.TestCase):
             self.assertEqual(hook.decide(event, env={}, hosts=HOSTS)[0], "deny")
         with mock.patch.object(allowlist, "config_edit", return_value="ask"):
             self.assertEqual(hook.decide(event, env={}, hosts=HOSTS)[0], "ask")
+
+
+class DiagnosticTest(unittest.TestCase):
+    """0.4.5 temporary: tool names are logged only while the flag file exists; unknown tools pass."""
+    def test_logs_names_only_with_the_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"USERPROFILE": tmp, "HOME": tmp}):
+                event = {"tool_name": "cowork_copy_file", "tool_input": {"source": "C:/secreto/.env"}}
+                self.assertIsNone(hook.decide(event, env={}, hosts=HOSTS), "unknown tools pass")
+                log = Path(tmp) / ".agentguard" / "herramientas-vistas.log"
+                self.assertFalse(log.exists(), "no flag: nothing logged")
+                (Path(tmp) / ".agentguard").mkdir()
+                (Path(tmp) / ".agentguard" / "diagnostico-herramientas").write_text("", encoding="utf-8")
+                hook.decide(event, env={}, hosts=HOSTS)
+                text = log.read_text(encoding="utf-8")
+                self.assertIn("cowork_copy_file", text)
+                self.assertNotIn("secreto", text, "never the tool input")
+
 
 if __name__ == "__main__":
     unittest.main()
