@@ -1,6 +1,6 @@
 {
   "permissions": {
-    "defaultMode": "default",
+    "defaultMode": "acceptEdits",
     "disableBypassPermissionsMode": "disable",
     "disableAutoMode": "disable",
     "deny": [
@@ -40,7 +40,16 @@
       "PowerShell(Set-ExecutionPolicy *)"
     ],
     "allow": [
-      "WebFetch(domain:<dominio-aprobado>)"
+      "WebFetch(domain:<dominio-aprobado>)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git fetch *)",
+      "Bash(git rev-parse *)"
     ]
   },
   "allowManagedPermissionRulesOnly": true,

@@ -32,7 +32,8 @@ URI = re.compile(r"^(?:scp|sftp|ssh)://(?:[^@/]+@)?(\[[^\]]+\]|[^:/]+)", re.IGNO
 URL = re.compile(r"^(?:https?|ftps?)://(?:[^@/?#]+@)?(\[[^\]]+\]|[^:/?#]+)", re.IGNORECASE)
 RISKY_OPTION = re.compile(r"proxycommand|localcommand|permitlocalcommand", re.IGNORECASE)
 USER_LIST = re.compile(r"allow-hosts\.json", re.IGNORECASE)   # the user (and so the agent) can write it
-ORG_LIST = re.compile(r"agentguard(?:[\\/]| baseline[\\/])baseline\.json", re.IGNORECASE)   # admin/SYSTEM only
+# admin/SYSTEM only: the organization's baseline and the machine's approved exceptions (agentguard-control-exceptions)
+ORG_LIST = re.compile(r"agentguard(?:[\\/]| baseline[\\/])(?:baseline|exceptions)\.json", re.IGNORECASE)
 LIST_FILES = re.compile(f"{USER_LIST.pattern}|{ORG_LIST.pattern}", re.IGNORECASE)
 LOCAL_EXEC = re.compile(r"\$\(|`|<\(|>\(")   # inside quotes these still run a command on THIS machine
 # Web tool options whose next token is a value (not a URL), and options that route or configure the request elsewhere
@@ -95,6 +96,16 @@ def load(path: Path | None = None, home: Path | None = None) -> dict:
         except (OSError, ValueError):
             pass
     return allow
+
+
+def config_edit(path: Path | None = None) -> str:
+    """'deny' when the organization's baseline sets params.agentguard_config_edit = 'deny' (agentguard-client-config
+    RC5), else 'ask'. A missing or malformed file keeps 'ask', the behaviour without a baseline."""
+    try:
+        params = json.loads((path or baseline_path()).read_text(encoding="utf-8"))["data"]["params"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "ask"
+    return "deny" if isinstance(params, dict) and params.get("agentguard_config_edit") == "deny" else "ask"
 
 
 def approved(host: str, hosts: set[str]) -> bool:

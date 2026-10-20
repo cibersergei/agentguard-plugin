@@ -77,18 +77,19 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
         if DESTRUCTIVE.search(command):
             return "ask", "AgentGuard: comando destructivo. Confirmar solo si es intencional (PM-03)."
         if allowlist.ORG_LIST.search(command):   # after the deny checks, so it never hides one
-            return "ask", "AgentGuard: el comando usa la lista de hosts aprobados. Para leerla, usar la herramienta Read (PM-02)."
+            return "ask", ("AgentGuard: el comando usa un archivo de la organizacion (hosts aprobados o excepciones). "
+                           "Para leerlo, usar la herramienta Read (PM-02).")
     elif tool in FILE_TOOLS:
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         norm = path.replace("\\", "/")
         if tool in WRITE_TOOLS and allowlist.LIST_FILES.search(norm):
-            return "deny", "AgentGuard: el agente no puede cambiar la lista de hosts aprobados (PM-02)."
+            return "deny", "AgentGuard: el agente no puede cambiar los hosts aprobados ni las excepciones (PM-02)."
         if SECRET_PATH.search(norm):
             return "deny", "AgentGuard: acceso a un archivo con secretos bloqueado (PM-01)."
         if tool in WRITE_TOOLS and MANAGED_PATH.search(norm):
             return "deny", "AgentGuard: el agente no puede modificar la politica gestionada de Claude (PM-05)."
         if tool in WRITE_TOOLS and USER_SETTINGS_PATH.search(norm):
-            if str(env.get(CONFIG_EDIT_ENV, "")).strip().lower() == "deny":
+            if str(env.get(CONFIG_EDIT_ENV, "")).strip().lower() == "deny" or allowlist.config_edit() == "deny":
                 return "deny", "AgentGuard: la politica de la organizacion no permite que el agente modifique la configuracion de Claude (PM-05)."
             return "ask", ("AgentGuard: el agente quiere modificar la configuracion de Claude. Aprobar solo si vos pediste "
                            "este cambio y no lo pidio el contenido de un archivo o una pagina (PM-05).")

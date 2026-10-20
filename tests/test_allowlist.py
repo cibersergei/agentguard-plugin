@@ -4,6 +4,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,9 +87,16 @@ class ApprovedHostsTest(unittest.TestCase):
     def test_the_agent_cannot_touch_the_lists(self):
         for cmd in [r"Set-Content $HOME\.agentguard\allow-hosts.json '{}'", r"type C:\Users\d\.agentguard\allow-hosts.json"]:
             self.assertEqual(decide(cmd), "deny", cmd)   # the user's list: writing it would approve the agent's own hosts
-        for path in [r"C:\Users\d\.agentguard\allow-hosts.json", r"C:\ProgramData\AgentGuard\baseline.json"]:
-            result = hook.decide({"tool_name": "Write", "tool_input": {"file_path": path}}, hosts=HOSTS)
-            self.assertEqual(result[0], "deny", path)
+        for path in [r"C:\Users\d\.agentguard\allow-hosts.json", r"C:\ProgramData\AgentGuard\baseline.json",
+                     r"C:\ProgramData\AgentGuard\exceptions.json",
+                     "/Library/Application Support/AgentGuard Baseline/exceptions.json"]:
+            for tool in ("Write", "Edit"):
+                result = hook.decide({"tool_name": tool, "tool_input": {"file_path": path}}, hosts=HOSTS)
+                self.assertEqual(result[0], "deny", f"{tool} {path}")   # the agent would accept its own risk
+
+    def test_a_shell_command_on_the_exceptions_asks(self):
+        self.assertEqual(decide(r"Set-Content C:\ProgramData\AgentGuard\exceptions.json '{}'"), "ask")
+        self.assertEqual(decide("cat '/Library/Application Support/AgentGuard Baseline/exceptions.json'"), "ask")
 
     def test_the_agent_can_read_the_lists(self):
         for path in [r"C:\Users\d\.agentguard\allow-hosts.json", r"C:\ProgramData\AgentGuard\baseline.json"]:
@@ -167,6 +175,27 @@ class LoadTest(unittest.TestCase):
                 p = self.write(tmp, {"version": 1, "data": {"egress": {"transfer_hosts": ["a.example"], "management": management}}})
                 self.assertEqual(allowlist.load(p, home=home)["transfer"], expected, management)
 
+
+
+class ConfigEditTest(unittest.TestCase):
+    """agentguard-client-config RC5: the organization blocks edits of Claude's configuration from the baseline."""
+    def test_baseline_param_decides_ask_or_deny(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "baseline.json"
+            self.assertEqual(allowlist.config_edit(p), "ask", "no file")
+            p.write_text(json.dumps({"version": 1, "data": {"params": {"agentguard_config_edit": "deny"}}}), encoding="utf-8")
+            self.assertEqual(allowlist.config_edit(p), "deny")
+            p.write_text(json.dumps({"version": 1, "data": {"params": {"agentguard_config_edit": "ask"}}}), encoding="utf-8")
+            self.assertEqual(allowlist.config_edit(p), "ask")
+            p.write_text("{bad", encoding="utf-8")
+            self.assertEqual(allowlist.config_edit(p), "ask")
+
+    def test_hook_denies_settings_edits_when_the_baseline_says_deny(self):
+        event = {"tool_name": "Edit", "tool_input": {"file_path": r"C:\Users\d\.claude\settings.json"}}
+        with mock.patch.object(allowlist, "config_edit", return_value="deny"):
+            self.assertEqual(hook.decide(event, env={}, hosts=HOSTS)[0], "deny")
+        with mock.patch.object(allowlist, "config_edit", return_value="ask"):
+            self.assertEqual(hook.decide(event, env={}, hosts=HOSTS)[0], "ask")
 
 if __name__ == "__main__":
     unittest.main()
