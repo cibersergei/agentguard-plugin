@@ -2,7 +2,6 @@
 
 import importlib.util
 import json
-import os
 import tempfile
 import unittest
 from unittest import mock
@@ -216,21 +215,23 @@ class ConfigEditTest(unittest.TestCase):
             self.assertEqual(hook.decide(event, env={}, hosts=HOSTS)[0], "ask")
 
 
-class DiagnosticTest(unittest.TestCase):
-    """0.4.5 temporary: tool names are logged only while the flag file exists; unknown tools pass."""
-    def test_logs_names_only_with_the_flag(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"USERPROFILE": tmp, "HOME": tmp}):
-                event = {"tool_name": "cowork_copy_file", "tool_input": {"source": "C:/secreto/.env"}}
-                self.assertIsNone(hook.decide(event, env={}, hosts=HOSTS), "unknown tools pass")
-                log = Path(tmp) / ".agentguard" / "herramientas-vistas.log"
-                self.assertFalse(log.exists(), "no flag: nothing logged")
-                (Path(tmp) / ".agentguard").mkdir()
-                (Path(tmp) / ".agentguard" / "diagnostico-herramientas").write_text("", encoding="utf-8")
-                hook.decide(event, env={}, hosts=HOSTS)
-                text = log.read_text(encoding="utf-8")
-                self.assertIn("cowork_copy_file", text)
-                self.assertNotIn("secreto", text, "never the tool input")
+class SearchToolsTest(unittest.TestCase):
+    """0.4.6: Glob and Grep (Claude Code and Cowork) on secret locations are denied (PM-01)."""
+    def search(self, tool, **tool_input):
+        result = hook.decide({"tool_name": tool, "tool_input": tool_input}, env={}, hosts=HOSTS)
+        return result[0] if result else None
+
+    def test_secret_locations_are_denied(self):
+        self.assertEqual(self.search("Glob", pattern="**/.env"), "deny")
+        self.assertEqual(self.search("Glob", pattern="*", path="C:\\Users\\d\\.ssh"), "deny")
+        self.assertEqual(self.search("Grep", pattern="key", path="/root/.aws"), "deny")
+        self.assertEqual(self.search("Grep", pattern="x", glob=".env.*"), "deny")
+
+    def test_normal_searches_pass(self):
+        self.assertIsNone(self.search("Glob", pattern="src/**/*.py"))
+        self.assertIsNone(self.search("Grep", pattern=r"\.env|\.ssh/", path="docs"), "the Grep regex is text, not a path")
+        self.assertIsNone(self.search("Glob", pattern="**/environment.py"))
+        self.assertIsNone(self.search("mcp__remote-devices__computer_screenshot"), "other tools pass")
 
 
 if __name__ == "__main__":

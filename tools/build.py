@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 VARIANTS = {"agentguard": ("python", "Windows"), "agentguard-macos": ("python3", "macOS y Linux")}
 DESCRIPTION = ("GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar "
                "y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y "
@@ -36,8 +36,8 @@ def hooks(python: str) -> dict:
         return {"type": "command", "command": python, "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/" + script], "timeout": timeout}
     return {"hooks": {
         "SessionStart": [{"hooks": [handler("agentguard_session.py", 10)]}],
-        # 0.4.5 TEMPORARY: every tool, to learn the names of the Cowork tools (diagnostic). 0.4.6 narrows it again.
-        "PreToolUse": [{"matcher": "*",
+        # Cowork uses the same tool names as Claude Code (tested 2026-10-20), so one matcher covers both.
+        "PreToolUse": [{"matcher": "Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep",
                         "hooks": [handler("agentguard_pretooluse.py", 10)]}],
     }}
 
