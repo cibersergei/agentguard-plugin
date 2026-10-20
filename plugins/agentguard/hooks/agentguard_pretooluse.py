@@ -67,7 +67,11 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
         if allowlist.USER_LIST.search(command):
             return "deny", "AgentGuard: el agente no puede cambiar la lista de hosts aprobados (PM-02)."
         hosts = allowlist.load() if hosts is None else hosts
-        egress_text, secret_text = allowlist.strip_approved(command, hosts)
+        # PowerShell escapes a quote inside "..." with a backtick (`"), the same as \" in Bash: read it that way so
+        # an approved ssh with a quoted remote command is not taken as a local command. $( ) and any other backtick
+        # still count as local execution.
+        parsed = command.replace('`"', '\\"') if tool == "PowerShell" else command
+        egress_text, secret_text = allowlist.strip_approved(parsed, hosts)
         match = EGRESS.search(egress_text)
         if match or WEBCLIENT.search(command):
             name = match.group(1) if match else "Net.WebClient"

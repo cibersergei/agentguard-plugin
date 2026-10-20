@@ -218,7 +218,8 @@ def _transfer(tool: str, args: list[str]) -> dict:
     if tool == "scp":
         for p in positional:
             m = URI.match(p) or REMOTE.match(p)
-            if m and len(m.group(1).strip("[]")) > 1:   # "C:\..." is a Windows drive, not a host
+            # "C:\..." is a Windows drive and "$env:TEMP\..." a PowerShell environment path: local files, not hosts
+            if m and len(m.group(1).strip("[]")) > 1 and not m.group(1).lower().startswith("$env"):
                 hosts.append(m.group(1))
     elif positional:   # sftp and ssh: the first positional argument is the destination
         m = URI.match(positional[0])

