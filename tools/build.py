@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-VERSION = "0.4.6"
+VERSION = "0.4.7"
 VARIANTS = {"agentguard": ("python", "Windows"), "agentguard-macos": ("python3", "macOS y Linux")}
 DESCRIPTION = ("GenIA AgentGuard (IMR): politica de seguridad para agentes de IA. Skill de politica, skill para revisar "
                "y corregir los resultados del equipo, recordatorio al iniciar sesion y hooks que bloquean secretos y "

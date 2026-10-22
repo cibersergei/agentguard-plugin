@@ -70,12 +70,19 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
         hosts = allowlist.load() if hosts is None else hosts
         # PowerShell escapes a quote inside "..." with a backtick (`"), the same as \" in Bash: read it that way so
         # an approved ssh with a quoted remote command is not taken as a local command. $( ) and any other backtick
-        # still count as local execution.
-        parsed = command.replace('`"', '\\"') if tool == "PowerShell" else command
+        # still count as local execution. `$ is a literal $ in PowerShell (read as Bash's \$); a PowerShell \$( is a
+        # backslash followed by a real $( ), so a space keeps it local.
+        parsed = command
+        if tool == "PowerShell":
+            parsed = command.replace("\\$", "\\ $").replace('`"', '\\"').replace("`$", "\\$")
         egress_text, secret_text = allowlist.strip_approved(parsed, hosts)
         match = EGRESS.search(egress_text)
         if match or WEBCLIENT.search(command):
             name = match.group(1) if match else "Net.WebClient"
+            if match and allowlist.local_exec_only(parsed, hosts):
+                escape = "`$(" if tool == "PowerShell" else "\\$("
+                return "deny", (f"AgentGuard: el comando remoto de {name} tiene $( ) o una comilla invertida que se "
+                                f"ejecuta en este equipo. Para que corra en el servidor, escribir {escape} (PM-02).")
             return "deny", f"AgentGuard: comando de salida de datos bloqueado ({name}) (PM-02)."
         if SECRET_PATH.search(secret_text):
             return "deny", "AgentGuard: el comando usa una ruta con secretos (PM-01)."

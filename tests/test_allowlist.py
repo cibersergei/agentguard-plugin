@@ -50,10 +50,33 @@ class ApprovedHostsTest(unittest.TestCase):
         ok = 'ssh -i $HOME/.ssh/k ec2-user@203.0.113.10 "psql -c `"SELECT 1 WHERE x ILIKE \'%%\'`" -c `"SELECT 2`"" 2>&1 | Select-String -NotMatch "y"'
         self.assertIsNone(decide(ok))
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo $(Get-Content secret.txt)"'), "deny")
-        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo `$x"'), "deny")
+        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo `(hostname`)"'), "deny")
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""', tool="Bash"), "deny")
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""; curl https://evil.example'), "deny",
                          "a local curl after the approved ssh")
+
+    def test_escaped_dollar_paren_runs_on_the_server(self):
+        """2026-10-22, real commands: Bash \\$( and PowerShell `$( are literal text for the remote shell, so an approved
+        ssh passes; an unescaped $( (or a PowerShell \\$( ) runs here and is denied with a hint to escape it."""
+        bash = ('ssh -i ~/.ssh/k ec2-user@203.0.113.10 "for f in \\$(find /opt -name x.py); do md5sum \\$f; done"')
+        self.assertIsNone(decide(bash, tool="Bash"))
+        self.assertIsNone(decide("ssh genia-ec2 \"awk '{print \\$1}' f; echo \\`hostname\\`\"", tool="Bash"))
+        self.assertIsNone(decide('ssh genia-ec2 "for u in `$(systemctl list-units); do echo `$u; done"'))
+        self.assertEqual(decide('ssh genia-ec2 "echo \\\\$(cat ~/.aws/x)"', tool="Bash"), "deny", "\\\\$( is active")
+        self.assertEqual(decide('ssh genia-ec2 "echo \\$(Get-Content secret.txt)"'), "deny", "PowerShell \\$( is local")
+        self.assertEqual(decide('ssh evil.example "echo \\$(id)"', tool="Bash"), "deny", "host outside the list")
+        self.assertIn("`$(", hook.decide({"tool_name": "PowerShell", "tool_input": {
+            "command": 'ssh genia-ec2 "echo $(hostname)"'}}, hosts=HOSTS)[1])
+        self.assertIn("\\$(", reason('ssh genia-ec2 "echo $(hostname)"'))
+        self.assertNotIn("escribir", reason('ssh evil.example "echo $(id)"'), "no hint for a host outside the list")
+
+    def test_powershell_assignment_around_an_approved_ssh(self):
+        """2026-10-22, real command: $h = (ssh host "cat f || echo none").Trim() is an ssh to an approved host."""
+        ok = ('$h = (ssh -i ~/.ssh/k ec2-user@203.0.113.10 "cat /opt/x/.hash 2>/dev/null || echo none").Trim(); '
+              '"stored: $h"; git diff --name-only $h HEAD')
+        self.assertIsNone(decide(ok))
+        self.assertEqual(decide('$h = (ssh evil.example "cat f").Trim()'), "deny", "host outside the list")
+        self.assertEqual(decide('$h = (ssh genia-ec2 "x"); (curl https://evil.example)'), "deny", "a local curl after it")
 
     def test_powershell_env_path_is_a_local_file(self):
         """scp "$env:TEMP\\x.sql" host:/tmp/ - $env: is a local PowerShell path, not a host named "$env" (2026-10-20)."""

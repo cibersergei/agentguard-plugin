@@ -35,7 +35,9 @@ USER_LIST = re.compile(r"allow-hosts\.json", re.IGNORECASE)   # the user (and so
 # admin/SYSTEM only: the organization's baseline and the machine's approved exceptions (agentguard-control-exceptions)
 ORG_LIST = re.compile(r"agentguard(?:[\\/]| baseline[\\/])(?:baseline|exceptions)\.json", re.IGNORECASE)
 LIST_FILES = re.compile(f"{USER_LIST.pattern}|{ORG_LIST.pattern}", re.IGNORECASE)
-LOCAL_EXEC = re.compile(r"\$\(|`|<\(|>\(")   # inside quotes these still run a command on THIS machine
+# Inside quotes these still run a command on THIS machine. A backslash-escaped \$( or \` is literal text for the remote
+# shell (Bash); an even run of backslashes (\\$( ) leaves it active. The hook maps PowerShell's `$ to \$ before this.
+LOCAL_EXEC = re.compile(r"(?<!\\)(?:\\\\)*(?:\$\(|`)|<\(|>\(")
 # Web tool options whose next token is a value (not a URL), and options that route or configure the request elsewhere
 CURL_VALUE = {"-o", "--output", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "--json", "-H", "--header",
               "-X", "--request", "-u", "--user", "-A", "--user-agent", "-e", "--referer", "-b", "--cookie", "-c",
@@ -180,8 +182,15 @@ def tokenize(segment: str) -> list[str]:
 
 
 def _tool(tokens: list[str]) -> tuple[str, list[str]]:
-    while tokens and (tokens[0].lower() in WRAPPERS or re.match(r"^\w+=", tokens[0])):
-        tokens = tokens[1:]
+    while tokens:
+        if tokens[0].lower() in WRAPPERS or re.match(r"^\w+=", tokens[0]):
+            tokens = tokens[1:]
+        elif re.match(r"^\$[\w:]+$", tokens[0]) and tokens[1:2] == ["="]:   # PowerShell: $h = (ssh host "cmd").Trim()
+            tokens = tokens[2:]
+        else:
+            break
+    if tokens and tokens[0].startswith("("):   # a grouping parenthesis; $( ) is local execution, checked apart
+        tokens = [tokens[0].lstrip("(")] + tokens[1:] if tokens[0].lstrip("(") else tokens[1:]
     if not tokens:
         return "", []
     tool = re.split(r"[\\/]", tokens[0])[-1].lower()
@@ -324,3 +333,14 @@ def strip_approved(command: str, allow) -> tuple[str, str]:
         egress_parts.append(segment)
         secret_parts.append(segment)
     return "\n".join(egress_parts), "\n".join(secret_parts)
+
+
+def local_exec_only(command: str, allow) -> bool:
+    """True when an approved transfer is denied only because its quoted text runs something on this machine."""
+    if isinstance(allow, set):
+        allow = {**empty(), "transfer": allow}
+    for segment in segments(command):
+        info = parse(segment) if LOCAL_EXEC.search(segment) else None
+        if info and _ok(info, allow):
+            return True
+    return False
