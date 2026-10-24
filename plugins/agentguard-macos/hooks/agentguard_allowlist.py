@@ -233,7 +233,8 @@ def _transfer(tool: str, args: list[str]) -> dict:
     elif positional:   # sftp and ssh: the first positional argument is the destination
         m = URI.match(positional[0])
         hosts.append(m.group(1) if m else _host_of(positional[0]))
-    return {"list": "transfer", "hosts": hosts, "keys": keys, "ok": ok and bool(hosts)}
+    remote = " ".join(positional[1:]) if tool == "ssh" else ""   # the command ssh runs on the server
+    return {"list": "transfer", "hosts": hosts, "keys": keys, "ok": ok and bool(hosts), "remote": remote}
 
 
 def _web(tool: str, args: list[str]) -> dict:
@@ -323,7 +324,7 @@ def strip_approved(command: str, allow) -> tuple[str, str]:
     egress_parts, secret_parts = [], []
     for segment in segments(command):   # stripped: the egress rule anchors at the start
         info = parse(segment)
-        if info and not LOCAL_EXEC.search(segment) and _ok(info, allow):
+        if info and not runs_here(segment) and _ok(info, allow):
             secret = segment
             for key in info["keys"]:
                 if re.search(r"[\\/]\.ssh[\\/]", key.replace("~", "/")):
@@ -335,12 +336,69 @@ def strip_approved(command: str, allow) -> tuple[str, str]:
     return "\n".join(egress_parts), "\n".join(secret_parts)
 
 
+# A quoted text that one of these runs is code, not data (agentguard-plugin-allow RP3.2)
+EXECUTES_TEXT = re.compile(r"(?i)(?:^|[\s&(])(?:bash|sh|zsh|pwsh|powershell|cmd|wsl|invoke-expression|iex|start-process"
+                           r"|xargs|eval|exec|source|python3?|node|perl|ruby|sudo|env|nohup|time|command)(?:\.exe)?(?=$|[\s\"'])|\s-exec\b")
+
+
+def quote_spans(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, quote char) of each quoted text outside other quotes; \\" inside double quotes is escaped."""
+    spans, quote, start, i = [], None, 0, 0
+    while i < len(text):
+        ch = text[i]
+        if quote == '"' and ch == "\\" and i + 1 < len(text):
+            i += 2
+            continue
+        if quote and ch == quote:
+            spans.append((start, i + 1, quote))
+            quote = None
+        elif not quote and ch in "\"'":
+            quote, start = ch, i
+        i += 1
+    return spans
+
+
+def runs_here(segment: str) -> bool:
+    """$( ), a backtick, <( ) or >( ) that runs on THIS machine. Inside single quotes they are literal text, in Bash and
+    in PowerShell (ssh host 'echo $(hostname)' runs hostname on the server)."""
+    out = list(segment)
+    for start, end, quote in quote_spans(segment):
+        if quote == "'":
+            out[start:end] = " " * (end - start)
+    return bool(LOCAL_EXEC.search("".join(out)))
+
+
+def unquoted(segment: str) -> str:
+    """The segment with every quoted text blanked (for checks on the shell syntax around it)."""
+    out = list(segment)
+    for start, end, _q in quote_spans(segment):
+        out[start:end] = " " * (end - start)
+    return "".join(out)
+
+
+def mask_quotes(segment: str) -> str:
+    """Text for the egress check (RP3). Quoted data is blanked, so a tool name inside it is not a command: a regex such
+    as 'Copying|scp'. Quoted text that runs is checked as a command, on a line of its own: the quoted command name
+    ("curl" url, & "C:\\bin\\curl.exe"), every quoted text of a segment that runs text (bash -c, iex, xargs, sudo,
+    find -exec...) and a double-quoted text with $( ) or a backtick (it runs here)."""
+    runs_text = bool(EXECUTES_TEXT.search(unquoted(segment)))
+    out, extra = list(segment), []
+    for n, (start, end, quote) in enumerate(quote_spans(segment)):
+        inner = segment[start + 1:end - 1]
+        if n == 0 and not segment[:start].strip(" &.(").strip():   # the command name itself is quoted
+            extra.append(re.split(r"[\\/]", inner.strip())[-1])
+        elif runs_text or (quote == '"' and LOCAL_EXEC.search(inner)):
+            extra.append(inner.strip())
+        out[start:end] = " " * (end - start)
+    return "\n".join(["".join(out)] + extra)
+
+
 def local_exec_only(command: str, allow) -> bool:
     """True when an approved transfer is denied only because its quoted text runs something on this machine."""
     if isinstance(allow, set):
         allow = {**empty(), "transfer": allow}
     for segment in segments(command):
-        info = parse(segment) if LOCAL_EXEC.search(segment) else None
+        info = parse(segment) if runs_here(segment) else None
         if info and _ok(info, allow):
             return True
     return False

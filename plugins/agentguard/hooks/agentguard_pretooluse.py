@@ -16,9 +16,14 @@ Blocks inside the agent session what the AgentGuard catalog checks from outside:
           change (agentguard-revisar applies fixes this way). A client policy can set the environment variable
           AGENTGUARD_CONFIG_EDIT=deny (managed settings "env") to block these edits too.
   ask   - destructive commands (PM-03): rm -rf, git push --force, git reset --hard, git clean -fd, Remove-Item -Recurse, ...
+          except a recursive delete of temporary or cache folders only (agentguard_autoallow)
+  allow - only when the client turned it on (baseline params.agentguard_auto_allow): a command whose every part is an
+          approved transfer, a temporary delete, a read-only filter or an approved command prefix (agentguard_autoallow).
+          Claude Code still applies the deny and ask rules of settings after an allow.
+A tool name inside quoted data (a regex, a commit message) is not a command; quoted text that runs (bash -c, iex) is.
 
 Protocol (code.claude.com/docs/en/hooks): JSON on stdin with tool_name and tool_input. A decision is printed as
-hookSpecificOutput.permissionDecision ("deny" or "ask") with a reason, exit 0. Nothing printed = normal flow.
+hookSpecificOutput.permissionDecision ("deny", "ask" or "allow") with a reason, exit 0. Nothing printed = normal flow.
 Input that cannot be parsed is not blocked (fail open), so a broken hook never stops the user's work; managed
 permission rules (templates/) are the hard barrier. The reason names the rule, never the command or file content.
 """
@@ -32,6 +37,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling module, also when imported by the tests
 import agentguard_allowlist as allowlist  # noqa: E402
+import agentguard_autoallow as autoallow  # noqa: E402
 
 SHELL_TOOLS = {"Bash", "PowerShell"}
 FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -49,15 +55,12 @@ BYPASS = re.compile(r"--dangerously-skip-permissions|--permission-mode[ =]+bypas
 MANAGED_PATH = re.compile(r"[\\/]ClaudeCode[\\/]|[\\/]managed-settings(?:\.d)?", re.IGNORECASE)
 USER_SETTINGS_PATH = re.compile(r"[\\/]\.claude[\\/]settings(?:\.local)?\.json$|[\\/]\.claude\.json$", re.IGNORECASE)
 CONFIG_EDIT_ENV = "AGENTGUARD_CONFIG_EDIT"   # "deny" = the client policy forbids agent edits of settings
-DESTRUCTIVE = re.compile(
-    _START + r"(rm\s+-[a-z]*r[a-z]*f|rm\s+-[a-z]*f[a-z]*r|git\s+push\s+(?:.*\s)?(?:--force|-f)\b|git\s+reset\s+--hard"
-    r"|git\s+clean\s+-[a-z]*f|remove-item\b.*-recurse|format-volume|stop-computer|set-executionpolicy|mkfs|dd\s+if=)",
-    re.IGNORECASE)
 
 
-def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
+def decide(event: dict, env=None, hosts=None, auto=None) -> tuple[str, str] | None:
     """(decision, reason) or None when this hook has nothing to say.
-    hosts: approved transfer hosts; by default read from the organization's baseline.json (agentguard_allowlist)."""
+    hosts: approved transfer hosts; by default read from the organization's baseline.json (agentguard_allowlist).
+    auto: explicit-allow settings (agentguard_autoallow.settings); by default read from the same baseline."""
     env = os.environ if env is None else env
     tool = event.get("tool_name")
     tool_input = event.get("tool_input") or {}
@@ -76,7 +79,8 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
         if tool == "PowerShell":
             parsed = command.replace("\\$", "\\ $").replace('`"', '\\"').replace("`$", "\\$")
         egress_text, secret_text = allowlist.strip_approved(parsed, hosts)
-        match = EGRESS.search(egress_text)
+        # A tool name inside quoted data (a regex, a message) is not a command (agentguard-plugin-allow RP3)
+        match = EGRESS.search("\n".join(allowlist.mask_quotes(s) for s in egress_text.split("\n")))
         if match or WEBCLIENT.search(command):
             name = match.group(1) if match else "Net.WebClient"
             if match and allowlist.local_exec_only(parsed, hosts):
@@ -86,11 +90,16 @@ def decide(event: dict, env=None, hosts=None) -> tuple[str, str] | None:
             return "deny", f"AgentGuard: comando de salida de datos bloqueado ({name}) (PM-02)."
         if SECRET_PATH.search(secret_text):
             return "deny", "AgentGuard: el comando usa una ruta con secretos (PM-01)."
-        if DESTRUCTIVE.search(command):
+        # PM-03: a recursive delete of temporary or cache folders only does not ask (agentguard-plugin-allow RP2)
+        if autoallow.destructive(parsed, hosts) == "ask":
             return "ask", "AgentGuard: comando destructivo. Confirmar solo si es intencional (PM-03)."
         if allowlist.ORG_LIST.search(command):   # after the deny checks, so it never hides one
             return "ask", ("AgentGuard: el comando usa un archivo de la organizacion (hosts aprobados o excepciones). "
                            "Para leerlo, usar la herramienta Read (PM-02).")
+        # Explicit allow, only when the client turned it on (RP1); deny and ask rules of settings still apply
+        reason = autoallow.decide_allow(parsed, hosts, autoallow.settings() if auto is None else auto)
+        if reason:
+            return "allow", reason
     elif tool in FILE_TOOLS:
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         norm = path.replace("\\", "/")

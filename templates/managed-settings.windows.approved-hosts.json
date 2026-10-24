@@ -27,13 +27,11 @@
       "PowerShell(Start-BitsTransfer *)"
     ],
     "ask": [
-      "Bash(rm -rf *)",
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(git reset --hard *)",
       "Bash(git clean -fd*)",
       "Bash(sudo *)",
-      "PowerShell(Remove-Item *)",
       "PowerShell(Format-Volume *)",
       "PowerShell(Stop-Computer *)",
       "PowerShell(Set-ExecutionPolicy *)"

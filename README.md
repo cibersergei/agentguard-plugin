@@ -8,7 +8,7 @@ Lleva la politica de seguridad de la organizacion al interior de cada sesion del
 | Skill `agentguard-policy` | Politica en lenguaje concreto: secretos, salida de datos, acciones destructivas, configuracion de Claude, inyeccion de instrucciones, MCP y plugins |
 | Skill `agentguard-revisar` | Corre el verificador AgentGuard del equipo, abre el informe local (`~/.agentguard/report.html`) y ayuda a corregir cada problema, con confirmacion del usuario |
 | Hook `SessionStart` | Recuerda la politica al iniciar cada sesion |
-| Hook `PreToolUse` | Bloquea (`deny`) salida de datos, acceso a secretos, desactivar permisos y cambios a la politica gestionada. Pide confirmacion (`ask`) ante comandos destructivos y cambios a `settings.json` o `~/.claude.json` |
+| Hook `PreToolUse` | Bloquea (`deny`) salida de datos, acceso a secretos, desactivar permisos y cambios a la politica gestionada. Pide confirmacion (`ask`) ante comandos destructivos (salvo borrados de carpetas temporales o de cache) y cambios a `settings.json` o `~/.claude.json`. Desde 0.5.0, si la organizacion lo activa en su baseline (`agentguard_auto_allow`), aprueba (`allow`) sin preguntar los comandos cuyas partes estan todas aprobadas: transferencias a hosts aprobados, borrados temporales y prefijos de comandos de la organizacion |
 
 Para bloquear tambien los cambios a `settings.json` (sin confirmacion), la politica del cliente define la variable
 `AGENTGUARD_CONFIG_EDIT=deny` en el bloque `env` de los managed settings. Las plantillas de `templates/` ademas
