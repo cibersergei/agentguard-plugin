@@ -14,6 +14,16 @@ _spec.loader.exec_module(hook)
 allowlist = hook.allowlist
 
 HOSTS = {"203.0.113.10", "genia-ec2", "*.cliente.com"}
+_NO_BASELINE = mock.patch.object(allowlist, "baseline_path", return_value=Path(tempfile.gettempdir()) / "no-agentguard" / "x.json")
+
+
+def setUpModule():
+    """The machine's real baseline.json (for example with agentguard_auto_allow on) must not change these tests."""
+    _NO_BASELINE.start()
+
+
+def tearDownModule():
+    _NO_BASELINE.stop()
 
 
 def decide(cmd, tool="PowerShell", hosts=HOSTS):

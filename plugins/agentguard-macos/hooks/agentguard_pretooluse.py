@@ -19,6 +19,8 @@ Blocks inside the agent session what the AgentGuard catalog checks from outside:
           except a recursive delete of temporary or cache folders only (agentguard_autoallow)
   allow - only when the client turned it on (baseline params.agentguard_auto_allow): a command whose every part is an
           approved transfer, a temporary delete, a read-only filter or an approved command prefix (agentguard_autoallow).
+          Also Write / Edit of a document inside the project (.md, .txt, .html, .json...; agentguard_autoallow RP7),
+          so a session that went back to the "default" mode does not ask for each one.
           Claude Code still applies the deny and ask rules of settings after an allow.
 A tool name inside quoted data (a regex, a commit message) is not a command; quoted text that runs (bash -c, iex) is.
 
@@ -114,6 +116,11 @@ def decide(event: dict, env=None, hosts=None, auto=None) -> tuple[str, str] | No
                 return "deny", "AgentGuard: la politica de la organizacion no permite que el agente modifique la configuracion de Claude (PM-05)."
             return "ask", ("AgentGuard: el agente quiere modificar la configuracion de Claude. Aprobar solo si vos pediste "
                            "este cambio y no lo pidio el contenido de un archivo o una pagina (PM-05).")
+        if tool in WRITE_TOOLS:   # a document inside the project, only when the client turned it on (RP7)
+            reason = autoallow.decide_doc_allow(path, str(event.get("cwd") or ""),
+                                                autoallow.settings() if auto is None else auto)
+            if reason:
+                return "allow", reason
     elif tool in SEARCH_TOOLS:
         # Glob: the pattern is a path pattern. Grep: the pattern is the text searched for, so only path and glob count.
         parts = [tool_input.get("path"), tool_input.get("glob")] + ([tool_input.get("pattern")] if tool == "Glob" else [])

@@ -118,6 +118,37 @@ class ExplicitAllowTest(unittest.TestCase):
         self.assertNotIn("hostname", reason)
 
 
+class DocumentAllowTest(unittest.TestCase):
+    """RP7 (0.5.1): documents inside the project are approved when the client turned auto_allow on."""
+    CWD = "C:\\Onedrive\\repo"
+
+    def edit(self, path, cfg=TRANSFER, tool="Write"):
+        result = hook.decide({"tool_name": tool, "tool_input": {"file_path": path}, "cwd": self.CWD}, env={},
+                             hosts=HOSTS, auto=cfg)
+        return result[0] if result else None
+
+    def test_documents_inside_the_project(self):
+        for path in ["C:\\Onedrive\\repo\\ec2-services\\docs\\GENIA_APPS_IDENTIDAD_KEYCLOAK.md",   # real case
+                     "C:/Onedrive/repo/.kiro/specs/x/requirements.md", "c:\\onedrive\\REPO\\notas.txt",
+                     "docs/informe.html", "data/listas.json", "out/tabla.csv", "conf/app.yaml"]:
+            self.assertEqual(self.edit(path), "allow", path)
+        self.assertEqual(self.edit("docs/a.md", tool="Edit"), "allow")
+
+    def test_never_without_the_option_or_outside_the_rules(self):
+        self.assertIsNone(self.edit("docs/a.md", cfg=OFF), "auto_allow off")
+        for path, why in [("C:\\Onedrive\\otro\\a.md", "outside the project"), ("C:\\Onedrive\\repo-copia\\a.md", "prefix"),
+                          ("docs/../../a.md", "traversal"), ("src/app.py", "code"), ("scripts/x.ps1", "script"),
+                          (".mcp.json", "dotfile"), (".github/workflows/ci.yml", "CI"), (".vscode/settings.json", "IDE"),
+                          ("CLAUDE.md", "agent instructions"), ("sub/AGENTS.md", "agent instructions"),
+                          ("deploy/production.yaml", "never_allow word"), ("Makefile", "no extension")]:
+            self.assertNotEqual(self.edit(path), "allow", why)
+
+    def test_earlier_rules_still_win(self):
+        self.assertEqual(self.edit("C:\\Onedrive\\repo\\.claude\\settings.json"), "ask", "PM-05")
+        self.assertEqual(self.edit("C:\\Onedrive\\repo\\.env.json"), "deny", "PM-01")
+        self.assertEqual(self.edit("C:\\ProgramData\\AgentGuard\\exceptions.json"), "deny", "AgentGuard lists")
+
+
 class SettingsTest(unittest.TestCase):
     """The three client parameters come from baseline.json; anything unreadable is "off" (fail closed)."""
     def write(self, tmp, params):

@@ -36,6 +36,36 @@ RM_VALUED = {"-path", "-literalpath", "-erroraction", "-ea", "-include", "-exclu
 HARMLESS_REDIRECT = re.compile(r"\d?\*?&?>>?\s*(?:&\d|/dev/null|\$null)", re.IGNORECASE)
 
 
+# RP7 (plugin 0.5.1): documents the agent may write inside the project without asking, when auto_allow is on
+DOC_EXT = {"md", "markdown", "txt", "rst", "adoc", "html", "htm", "css", "json", "jsonc", "csv", "tsv", "yaml", "yml",
+           "xml", "svg", "log"}
+CONFIG_DIRS = {".git", ".claude", ".github", ".gitlab", ".vscode", ".idea", ".husky", ".devcontainer", ".circleci"}
+AGENT_FILES = {"claude.md", "claude.local.md", "agents.md", ".clinerules"}   # instructions for the agent itself
+
+
+def decide_doc_allow(path: str, cwd: str, cfg: dict) -> str | None:
+    """The reason of an explicit allow for a document inside the project, or None (RP7)."""
+    if cfg.get("mode") not in ("transfer", "transfer_y_comandos") or not path or not cwd:
+        return None
+    norm = path.replace("\\", "/")
+    root = cwd.replace("\\", "/").rstrip("/")
+    if not re.match(r"^(?:[a-zA-Z]:)?/", norm):   # relative to the project
+        norm = root + "/" + norm
+    if "/../" in norm + "/" or "/./" in norm + "/" or not norm.lower().startswith(root.lower() + "/"):
+        return None
+    parts = norm[len(root) + 1:].split("/")
+    name = parts[-1]
+    if not name or name.startswith(".") or name.lower() in AGENT_FILES:
+        return None
+    if any(p.lower() in CONFIG_DIRS for p in parts[:-1]):
+        return None
+    if "." not in name or name.rsplit(".", 1)[1].lower() not in DOC_EXT:
+        return None
+    if any(w in norm.lower() for w in cfg.get("never", [])):
+        return None
+    return "AgentGuard: aprobado por la politica de la organizacion (documento del proyecto)."
+
+
 def settings(path: Path | None = None) -> dict:
     """{"mode", "prefixes", "never"} from the organization's baseline; mode "off" when it cannot be read."""
     off = {"mode": "off", "prefixes": [], "never": list(NEVER_DEFAULT)}
