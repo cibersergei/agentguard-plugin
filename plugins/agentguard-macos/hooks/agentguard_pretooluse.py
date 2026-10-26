@@ -20,7 +20,9 @@ Blocks inside the agent session what the AgentGuard catalog checks from outside:
   allow - only when the client turned it on (baseline params.agentguard_auto_allow): a command whose every part is an
           approved transfer, a temporary delete, a read-only filter or an approved command prefix (agentguard_autoallow).
           Also Write / Edit of a document inside the project (.md, .txt, .html, .json...; agentguard_autoallow RP7),
-          so a session that went back to the "default" mode does not ask for each one.
+          or of any project file with agentguard_allow_project_edits = "todo" (RP9), so a session that went back to
+          the "default" mode does not ask for each one; and WebFetch of public https pages without data in the URL
+          (agentguard_webfetch "libre") or of the client's domains ("lista") (RP10).
           Claude Code still applies the deny and ask rules of settings after an allow.
 A tool name inside quoted data (a regex, a commit message) is not a command; quoted text that runs (bash -c, iex) is.
 
@@ -121,6 +123,10 @@ def decide(event: dict, env=None, hosts=None, auto=None) -> tuple[str, str] | No
                                                 autoallow.settings() if auto is None else auto)
             if reason:
                 return "allow", reason
+    elif tool == "WebFetch":   # RP10: allow only, when the client turned it on; never a deny
+        reason = autoallow.decide_webfetch(tool_input.get("url"), autoallow.settings() if auto is None else auto)
+        if reason:
+            return "allow", reason
     elif tool in SEARCH_TOOLS:
         # Glob: the pattern is a path pattern. Grep: the pattern is the text searched for, so only path and glob count.
         parts = [tool_input.get("path"), tool_input.get("glob")] + ([tool_input.get("pattern")] if tool == "Glob" else [])

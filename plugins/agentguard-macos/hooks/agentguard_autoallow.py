@@ -59,28 +59,74 @@ def decide_doc_allow(path: str, cwd: str, cfg: dict) -> str | None:
         return None
     if any(p.lower() in CONFIG_DIRS for p in parts[:-1]):
         return None
-    if "." not in name or name.rsplit(".", 1)[1].lower() not in DOC_EXT:
+    every_file = cfg.get("edits") == "todo"   # RP9: like acceptEdits, without depending on the session mode
+    if not every_file and ("." not in name or name.rsplit(".", 1)[1].lower() not in DOC_EXT):
         return None
     if any(w in norm.lower() for w in cfg.get("never", [])):
         return None
-    return "AgentGuard: aprobado por la politica de la organizacion (documento del proyecto)."
+    what = "archivo del proyecto" if every_file else "documento del proyecto"
+    return f"AgentGuard: aprobado por la politica de la organizacion ({what})."
+
+
+WEBFETCH_MODES = ("off", "lista", "libre")
+MAX_WEBFETCH_DOMAINS = 100
+PRIVATE_HOST = re.compile(r"^(?:localhost|.*\.(?:local|internal|lan|localdomain|home|corp))$", re.IGNORECASE)
+
+
+def decide_webfetch(url: str, cfg: dict) -> str | None:
+    """RP10: the reason of an explicit allow for a WebFetch, or None (Claude Code asks as usual). Never a deny."""
+    mode = cfg.get("webfetch")
+    if mode not in ("lista", "libre") or not isinstance(url, str) or len(url) > 2000:
+        return None
+    from urllib.parse import unquote, urlsplit
+    try:
+        u = urlsplit(url.strip())
+        host = (u.hostname or "").lower().rstrip(".")
+        port = u.port
+    except ValueError:
+        return None
+    if u.scheme.lower() != "https" or u.username or u.password or not host or "." not in host:
+        return None
+    if port not in (None, 443) or PRIVATE_HOST.match(host) or re.fullmatch(r"[\d.]+", host) or ":" in host:
+        return None   # an IP, a private name or another port: not a public web page
+    query = unquote(u.query)
+    if len(query) > 100 or any(len(v) > 64 for v in re.split(r"[&=]", query)):
+        return None   # data in the URL
+    if any(len(p) > 100 for p in unquote(u.path).split("/")):
+        return None
+    if any(w in url.lower() for w in cfg.get("never", [])):
+        return None
+    if mode == "lista" and not allowlist.approved(host, set(cfg.get("webfetch_domains", []))):
+        return None
+    return f"AgentGuard: aprobado por la politica de la organizacion (WebFetch {'de la lista' if mode == 'lista' else 'con resguardo'})."
+
+
+def _words(raw, default) -> list[str]:
+    return [w.strip().lower() for w in raw if isinstance(w, str) and w.strip()] if isinstance(raw, list) else list(default)
 
 
 def settings(path: Path | None = None) -> dict:
-    """{"mode", "prefixes", "never"} from the organization's baseline; mode "off" when it cannot be read."""
-    off = {"mode": "off", "prefixes": [], "never": list(NEVER_DEFAULT)}
+    """The explicit-allow parameters of the organization's baseline; everything "off" when it cannot be read."""
+    off = {"mode": "off", "prefixes": [], "never": list(NEVER_DEFAULT), "edits": "docs", "webfetch": "off",
+           "webfetch_domains": []}
     try:
         params = json.loads((path or allowlist.baseline_path()).read_text(encoding="utf-8"))["data"]["params"]
     except (OSError, ValueError, KeyError, TypeError):
         return off
-    if not isinstance(params, dict) or params.get("agentguard_auto_allow") not in MODES:
+    if not isinstance(params, dict):
         return off
+    out = dict(off, never=_words(params.get("agentguard_never_allow"), NEVER_DEFAULT))
+    if params.get("agentguard_webfetch") in WEBFETCH_MODES:
+        out["webfetch"] = params["agentguard_webfetch"]
+        out["webfetch_domains"] = sorted(allowlist._hosts(params.get("agentguard_webfetch_domains")))[:MAX_WEBFETCH_DOMAINS]
+    if params.get("agentguard_auto_allow") not in MODES:
+        return out
     raw = params.get("agentguard_allow_commands")
-    prefixes = [p.strip() for p in raw if isinstance(p, str) and 6 <= len(p.strip()) <= 200 and not re.search(r"[*?]", p)
-                ][:MAX_PREFIXES] if isinstance(raw, list) else []
-    never = params.get("agentguard_never_allow")
-    never = [w.strip().lower() for w in never if isinstance(w, str) and w.strip()] if isinstance(never, list) else NEVER_DEFAULT
-    return {"mode": params["agentguard_auto_allow"], "prefixes": prefixes, "never": never}
+    out["prefixes"] = [p.strip() for p in raw if isinstance(p, str) and 6 <= len(p.strip()) <= 200
+                       and not re.search(r"[*?]", p)][:MAX_PREFIXES] if isinstance(raw, list) else []
+    out["mode"] = params["agentguard_auto_allow"]
+    out["edits"] = "todo" if params.get("agentguard_allow_project_edits") == "todo" else "docs"
+    return out
 
 
 def _assignments(command: str) -> dict:
@@ -109,11 +155,44 @@ def _expand(value: str, names: dict) -> str:
     return value
 
 
-def is_temp(target: str, names: dict) -> bool:
+def is_temp(target: str, names: dict, base: str = "") -> bool:
+    """base: the folder of the last absolute `cd` of the same command; a relative target is resolved against it (RP8)."""
     t = _expand(target, names).replace("\\", "/").strip()
+    if t and base and not re.match(r"^(?:/|[a-zA-Z]:|\$|~)", t):
+        t = base.rstrip("/") + "/" + t
     if not t or ".." in t:
         return False
     return bool(TEMP_PREFIX.match(t)) or t.rstrip("/").split("/")[-1].lower() == "__pycache__"
+
+
+REDIRECT = re.compile(r"^\d*&?(?:>>?|<)")
+
+
+def _drop_redirects(args: list[str]) -> list[str]:
+    """2>&1, >/dev/null, 2> file are redirections, not targets (RP8); a bare operator takes the next token."""
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif REDIRECT.match(a):
+            skip = bool(re.fullmatch(r"\d*&?(?:>>?|<)", a))
+        else:
+            out.append(a)
+    return out
+
+
+def _cd_target(seg: str) -> str | None:
+    """The folder of `cd <absolute folder>`, None for any other segment."""
+    try:
+        tokens = allowlist.tokenize(seg)
+    except ValueError:
+        return None
+    while tokens and tokens[0].lower() in SHELL_WORDS:
+        tokens = tokens[1:]
+    if len(tokens) == 2 and tokens[0].lower() in ("cd", "set-location", "pushd"):
+        path = tokens[1].replace("\\", "/")
+        return path if re.match(r"^(?:/|[a-zA-Z]:/)", path) else None
+    return None
 
 
 def _delete_targets(seg: str) -> list[str] | None:
@@ -125,6 +204,7 @@ def _delete_targets(seg: str) -> list[str] | None:
     while tokens and tokens[0].lower() in SHELL_WORDS:
         tokens = tokens[1:]
     tool, args = allowlist._tool(tokens)
+    args = _drop_redirects(args)
     if tool == "rm":
         return [a for a in args if not a.startswith("-")]
     if tool in ("remove-item", "ri"):
@@ -149,14 +229,23 @@ def _delete_targets(seg: str) -> list[str] | None:
     return None
 
 
-def _segment_delete(seg: str, names: dict) -> str | None:
+def _segment_delete(seg: str, names: dict, base: str = "") -> str | None:
     """"temp", "ask" or None (no recursive delete in this segment). Quoted data (a commit message) does not count;
     quoted text that runs (bash -c "rm -rf x") does."""
     bare = allowlist.unquoted(seg)
     if not RECURSIVE_DELETE.search(seg if allowlist.EXECUTES_TEXT.search(bare) else bare):
         return None
     targets = _delete_targets(seg)
-    return "temp" if targets and all(is_temp(t, names) for t in targets) else "ask"
+    return "temp" if targets and all(is_temp(t, names, base) for t in targets) else "ask"
+
+
+def _deletes(parts: list[str], names: dict) -> list[tuple[str, str | None]]:
+    """(segment, delete kind) of consecutive segments, following the last absolute cd (RP8)."""
+    out, base = [], ""
+    for p in parts:
+        base = _cd_target(p) or base
+        out.append((p, _segment_delete(p, names, base)))
+    return out
 
 
 def _remote(seg: str, hosts) -> str | None:
@@ -175,12 +264,14 @@ def destructive(command: str, hosts) -> str | None:
     """PM-03: "ask", "temp" (every recursive delete is temporary) or None (nothing destructive)."""
     if ALWAYS_ASK.search(command):
         return "ask"
-    found = []
+    found, local = [], []
     for seg in allowlist.segments(command):
         remote = _remote(seg, hosts)
-        parts, names = ((allowlist.segments(remote), _assignments(remote)) if remote is not None
-                        else ([seg], _assignments(command)))
-        found += [k for k in (_segment_delete(p, names) for p in parts) if k]
+        if remote is not None:
+            found += [k for _p, k in _deletes(allowlist.segments(remote), _assignments(remote)) if k]
+        else:
+            local.append(seg)
+    found += [k for _p, k in _deletes(local, _assignments(command)) if k]
     if not found:
         return None
     return "ask" if "ask" in found else "temp"
@@ -193,7 +284,10 @@ def decide_allow(command: str, hosts, cfg: dict) -> str | None:
     if any(w in command.lower() for w in cfg.get("never", [])):
         return None
     names, kinds = _assignments(command), set()
+    temp_deletes = {p for p, k in _deletes(allowlist.segments(command), names) if k == "temp"}
     for seg in allowlist.segments(command):
+        if re.match(r"^(?:cd|set-location|pushd)\s+(?:\"[^\"$`]*\"|'[^']*'|[^\s;&|$`]+)$", seg, re.IGNORECASE):
+            continue   # cd to a folder: changes nothing by itself
         if ">" in HARMLESS_REDIRECT.sub(" ", allowlist.unquoted(seg)):
             return None   # writes a file here
         info = allowlist.parse(seg)
@@ -203,7 +297,7 @@ def decide_allow(command: str, hosts, cfg: dict) -> str | None:
             return None
         if info and info["list"] == "transfer" and not allowlist.runs_here(seg) and allowlist._ok(info, _allow(hosts)):
             kinds.add("transfer aprobado")
-        elif _segment_delete(seg, names) == "temp":
+        elif seg in temp_deletes:
             kinds.add("borrado temporal")
         elif tool in READ_ONLY and not re.search(r"[{`]|\$\(", seg):
             continue

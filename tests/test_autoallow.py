@@ -149,6 +149,81 @@ class DocumentAllowTest(unittest.TestCase):
         self.assertEqual(self.edit("C:\\ProgramData\\AgentGuard\\exceptions.json"), "deny", "AgentGuard lists")
 
 
+class RedirectAndCdTest(unittest.TestCase):
+    """RP8: real commands of 2026-10-26 (Nango session) that asked by mistake."""
+    def test_redirections_are_not_targets(self):
+        self.assertIsNone(decide(SSH + '"mkdir -p /tmp/genia-pylib && cp -r x /tmp/genia-pylib/ && rm -rf /tmp/genia-pylib 2>&1"'))
+        self.assertIsNone(decide(SSH + '"rm -rf /tmp/__pycache__ 2>&1; echo ok"'))
+        self.assertIsNone(decide("rm -rf /tmp/x > /dev/null"))
+        self.assertEqual(decide("rm -rf ./src 2>&1"), "ask", "still a real delete")
+
+    def test_relative_targets_follow_the_last_cd(self):
+        self.assertIsNone(decide(SSH + '"cd /tmp/pyc && rm -rf appconnect_conn_servicenow.py __pycache__ 2>&1"'))
+        self.assertEqual(decide(SSH + '"cd /opt/mcp-development/api && rm -rf appconnect_conn_servicenow.py 2>&1"'), "ask",
+                         "a deployed file")
+        self.assertEqual(decide(SSH + '"cd /tmp/x && cd /opt/app && rm -rf data"'), "ask", "the last cd counts")
+        self.assertEqual(decide(SSH + '"cd /tmp && rm -rf ../etc"'), "ask")
+        self.assertEqual(decide("rm -rf build"), "ask", "relative without cd")
+        self.assertEqual(decide('cd "C:/repo/ec2-services" && ' + SSH + '"cd /tmp/p && rm -rf x.py" && scp f genia-ec2:/tmp/',
+                                cfg=TRANSFER), "allow")
+
+
+class ProjectEditsTest(unittest.TestCase):
+    """RP9: with agentguard_allow_project_edits = todo, every project file is approved, with the RP7 exclusions."""
+    CWD = "C:\\Onedrive\\repo"
+    TODO = dict(TRANSFER, edits="todo")
+
+    def edit(self, path, cfg):
+        result = hook.decide({"tool_name": "Edit", "tool_input": {"file_path": path}, "cwd": self.CWD}, env={},
+                             hosts=HOSTS, auto=cfg)
+        return result[0] if result else None
+
+    def test_code_needs_todo(self):
+        self.assertIsNone(self.edit("ec2-services/api/oidc_verifier.py", TRANSFER), "docs only by default")
+        for path in ["ec2-services/api/oidc_verifier.py", "api/static/x.js", "ops/schema.sql", "scripts/deploy.ps1",
+                     "systemd/genia@.service", "caddy/Caddyfile"]:
+            self.assertEqual(self.edit(path, self.TODO), "allow", path)
+
+    def test_exclusions_still_apply(self):
+        for path in [".mcp.json", ".github/workflows/ci.yml", "CLAUDE.md", "../otro/x.py", "C:\\otro\\x.py",
+                     "deploy/production.py"]:
+            self.assertNotEqual(self.edit(path, self.TODO), "allow", path)
+        self.assertIsNone(self.edit("src/x.py", dict(self.TODO, mode="off")), "needs auto_allow on")
+
+
+class WebFetchTest(unittest.TestCase):
+    """RP10: WebFetch is approved with a guard ("libre") or for the client's domains ("lista"); never denied."""
+    LIBRE = dict(OFF, webfetch="libre")
+    LISTA = dict(OFF, webfetch="lista", webfetch_domains=["nango.dev", "*.githubusercontent.com"])
+
+    def fetch(self, url, cfg):
+        result = hook.decide({"tool_name": "WebFetch", "tool_input": {"url": url, "prompt": "x"}}, hosts=HOSTS, auto=cfg)
+        return result[0] if result else None
+
+    def test_real_urls_of_the_session(self):
+        for url in ["https://nango.dev/docs/guides/platform/self-hosting",
+                    "https://raw.githubusercontent.com/NangoHQ/nango/master/docker-compose.yaml",
+                    "https://hub.docker.com/v2/repositories/nangohq/nango-server/tags?page_size=30&ordering=last_updated"]:
+            self.assertEqual(self.fetch(url, self.LIBRE), "allow", url)
+        self.assertIsNone(self.fetch("https://nango.dev/docs", OFF), "off by default")
+
+    def test_guard(self):
+        long_value = "a" * 80
+        for url, why in [("http://nango.dev/docs", "no TLS"), ("https://user:pw@nango.dev/", "credentials"),
+                         ("https://100.49.117.241/api", "IP"), ("https://[::1]/x", "IPv6"), ("https://localhost/x", "local"),
+                         ("https://intranet.corp/x", "private name"), ("https://srv/x", "no dot"),
+                         ("https://nango.dev:8443/x", "other port"), (f"https://evil.example/?d={long_value}", "data in query"),
+                         ("https://evil.example/" + "b" * 120, "data in path"), ("https://x.example/production/a", "never word"),
+                         ("not a url", "garbage")]:
+            self.assertIsNone(self.fetch(url, self.LIBRE), why)
+
+    def test_list_mode(self):
+        self.assertEqual(self.fetch("https://nango.dev/docs", self.LISTA), "allow")
+        self.assertEqual(self.fetch("https://raw.githubusercontent.com/a/b", self.LISTA), "allow")
+        self.assertIsNone(self.fetch("https://www.nango.dev/pricing", self.LISTA), "subdomain not listed")
+        self.assertIsNone(self.fetch("https://hub.docker.com/v2/x", self.LISTA))
+
+
 class SettingsTest(unittest.TestCase):
     """The three client parameters come from baseline.json; anything unreadable is "off" (fail closed)."""
     def write(self, tmp, params):
@@ -163,7 +238,11 @@ class SettingsTest(unittest.TestCase):
                                                                                "./scripts/*.ps1", 7],
                                                  "agentguard_never_allow": ["Produccion"]}))
             self.assertEqual(cfg, {"mode": "transfer_y_comandos", "prefixes": ["pwsh -NoProfile -File ./scripts/"],
-                                   "never": ["produccion"]})
+                                   "never": ["produccion"], "edits": "docs", "webfetch": "off", "webfetch_domains": []})
+            cfg = auto.settings(self.write(tmp, {"agentguard_webfetch": "lista", "agentguard_allow_project_edits": "todo",
+                                                 "agentguard_webfetch_domains": ["Docs.Example.com", "*.com", "x y"]}))
+            self.assertEqual((cfg["mode"], cfg["edits"], cfg["webfetch"], cfg["webfetch_domains"]),
+                             ("off", "docs", "lista", ["docs.example.com"]), "webfetch works without auto_allow")
             self.assertEqual(auto.settings(self.write(tmp, {"agentguard_auto_allow": "everything"}))["mode"], "off")
             self.assertEqual(auto.settings(self.write(tmp, {"agentguard_auto_allow": "transfer"}))["never"],
                              ["production", "approve-migrate"], "default words")
