@@ -238,7 +238,8 @@ class SettingsTest(unittest.TestCase):
                                                                                "./scripts/*.ps1", 7],
                                                  "agentguard_never_allow": ["Produccion"]}))
             self.assertEqual(cfg, {"mode": "transfer_y_comandos", "prefixes": ["pwsh -NoProfile -File ./scripts/"],
-                                   "never": ["produccion"], "edits": "docs", "webfetch": "off", "webfetch_domains": []})
+                                   "never": ["produccion"], "edits": "docs", "webfetch": "off", "webfetch_domains": [],
+                                   "delete_paths": []})
             cfg = auto.settings(self.write(tmp, {"agentguard_webfetch": "lista", "agentguard_allow_project_edits": "todo",
                                                  "agentguard_webfetch_domains": ["Docs.Example.com", "*.com", "x y"]}))
             self.assertEqual((cfg["mode"], cfg["edits"], cfg["webfetch"], cfg["webfetch_domains"]),

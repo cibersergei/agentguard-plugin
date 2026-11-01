@@ -60,7 +60,8 @@ class ApprovedHostsTest(unittest.TestCase):
         ok = 'ssh -i $HOME/.ssh/k ec2-user@203.0.113.10 "psql -c `"SELECT 1 WHERE x ILIKE \'%%\'`" -c `"SELECT 2`"" 2>&1 | Select-String -NotMatch "y"'
         self.assertIsNone(decide(ok))
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo $(Get-Content secret.txt)"'), "deny")
-        self.assertEqual(decide('ssh ec2-user@203.0.113.10 "echo `(hostname`)"'), "deny")
+        # 0.5.3 (RP12.3): in PowerShell `( is an escaped parenthesis, not a local command
+        self.assertIsNone(decide('ssh ec2-user@203.0.113.10 "echo `(hostname`)"'))
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""', tool="Bash"), "deny")
         self.assertEqual(decide('ssh ec2-user@203.0.113.10 "psql -c `"SELECT 1`""; curl https://evil.example'), "deny",
                          "a local curl after the approved ssh")
@@ -199,7 +200,8 @@ class WebAndNcTest(unittest.TestCase):
             p = Path(tmp) / "baseline.json"
             p.write_text(json.dumps({"version": 2, "data": {"egress": {"transfer_hosts": ["a.example"], "web_hosts": ["*.com", "b.example"],
                                                                       "allow_nc": True, "management": "org"}}}), encoding="utf-8")
-            self.assertEqual(allowlist.load(p), {"transfer": {"a.example"}, "web": {"b.example"}, "allow_nc": True})
+            self.assertEqual(allowlist.load(p), {"transfer": {"a.example"}, "web": {"b.example"}, "allow_nc": True,
+                                                 "web_free": False})
 
 
 class LoadTest(unittest.TestCase):

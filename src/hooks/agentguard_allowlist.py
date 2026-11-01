@@ -22,14 +22,14 @@ import sys
 from pathlib import Path
 
 HOST = re.compile(r"^(\*\.)?[a-z0-9](?:[a-z0-9-]{0,62})(?:\.[a-z0-9](?:[a-z0-9-]{0,62}))*$")
-WRAPPERS = {"sudo", "exec", "env", "nohup", "time", "command", "&"}
+WRAPPERS = {"sudo", "exec", "env", "nohup", "time", "command", "&", "do", "then", "else"}   # do/then/else: Bash loops (RP12.1)
 TRANSFER = {"scp", "sftp", "ssh"}
 WEB = {"curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "start-bitstransfer"}
 NC = {"nc", "ncat", "netcat"}
 WITH_VALUE = {"scp": set("cDFiJloPSX"), "sftp": set("BbcDFiJloPRSsX"), "ssh": set("BbcDEeFIiJLlmOoPpQRSWw")}
 REMOTE = re.compile(r"^(?:[^@\s]+@)?(\[[^\]]+\]|[^:/\\\s]+):")
 URI = re.compile(r"^(?:scp|sftp|ssh)://(?:[^@/]+@)?(\[[^\]]+\]|[^:/]+)", re.IGNORECASE)
-URL = re.compile(r"^(?:https?|ftps?)://(?:[^@/?#]+@)?(\[[^\]]+\]|[^:/?#]+)", re.IGNORECASE)
+URL = re.compile(r"^(?:https?|ftps?)://(?:[^@/?#]+@)?(\[[^\]]+\]|[^:/?#$]+)", re.IGNORECASE)   # $p after the host: a path
 RISKY_OPTION = re.compile(r"proxycommand|localcommand|permitlocalcommand", re.IGNORECASE)
 USER_LIST = re.compile(r"allow-hosts\.json", re.IGNORECASE)   # the user (and so the agent) can write it
 # admin/SYSTEM only: the organization's baseline and the machine's approved exceptions (agentguard-control-exceptions)
@@ -75,7 +75,7 @@ def _hosts(values) -> set[str]:
 
 
 def empty() -> dict:
-    return {"transfer": set(), "web": set(), "allow_nc": False}
+    return {"transfer": set(), "web": set(), "allow_nc": False, "web_free": False}
 
 
 def load(path: Path | None = None, home: Path | None = None) -> dict:
@@ -87,8 +87,10 @@ def load(path: Path | None = None, home: Path | None = None) -> dict:
         return empty()
     if not isinstance(egress, dict):
         return empty()
+    params = record["data"].get("params") if isinstance(record.get("data"), dict) else None
     allow = {"transfer": _hosts(egress.get("transfer_hosts")), "web": _hosts(egress.get("web_hosts")),
-             "allow_nc": egress.get("allow_nc") is True}
+             "allow_nc": egress.get("allow_nc") is True,
+             "web_free": isinstance(params, dict) and params.get("agentguard_web_egress") == "libre"}   # RP13.2
     if egress.get("management") == "self":   # RB3: the user's own lists, only when the organization allows it
         try:
             own = json.loads(((home or Path.home()) / ".agentguard" / "allow-hosts.json").read_text(encoding="utf-8"))
@@ -237,28 +239,44 @@ def _transfer(tool: str, args: list[str]) -> dict:
     return {"list": "transfer", "hosts": hosts, "keys": keys, "ok": ok and bool(hosts), "remote": remote}
 
 
+# RP13.2: options that send data or credentials; with them a web command is not a plain read
+SENDS_DATA = {"-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "--json", "-F", "--form", "-T",
+              "--upload-file", "-u", "--user", "-b", "--cookie", "--post-data", "--post-file", "--body-data", "--body-file",
+              "-body", "-infile", "-form", "-credential"}
+METHOD = {"-X", "--request", "--method", "-method"}
+
+
 def _web(tool: str, args: list[str]) -> dict:
     """URL hosts of curl / wget / Invoke-WebRequest and friends. Option values are skipped; a bare positional is a
-    host too (curl accepts example.com without a scheme); variables and routing options fail closed."""
+    host too (curl accepts example.com without a scheme); variables and routing options fail closed.
+    "urls" and "read_only" (no data, GET, short option values) serve the "libre" web option (RP13.2)."""
     powershell = tool not in ("curl", "wget")
     values = CURL_VALUE if tool == "curl" else WGET_VALUE
     risky = RISKY["powershell" if powershell else tool]
-    hosts, ok, i = [], True, 0
+    hosts, ok, read_only, i = [], True, True, 0
     while i < len(args):
         tok = args[i]
         low = tok.lower()
         name = tok.split("=", 1)[0] if not powershell else low.split("=", 1)[0]
         if name in risky:   # case matters for curl and wget (-K is --config, -k is --insecure)
             ok = False
+        if name in SENDS_DATA:
+            read_only = False
         if tok.startswith("-") and len(tok) > 1:
+            value = tok.split("=", 1)[1] if "=" in tok else (args[i + 1] if i + 1 < len(args) else "")
+            if name in METHOD and value.upper() != "GET":
+                read_only = False
             if powershell:
                 if low not in PS_SWITCHES:
-                    value = args[i + 1] if i + 1 < len(args) else ""
                     i += 1
                     if low in ("-uri", "-source"):
                         hosts.append(value)
+                    elif len(value) > 64:
+                        read_only = False
             elif "=" not in tok and (tok in values or name in values):
                 i += 1
+                if len(value) > 64 and name not in ("-o", "--output", "-O", "--output-document", "-w", "--write-out"):
+                    read_only = False
             i += 1
             continue
         hosts.append(tok)
@@ -269,8 +287,31 @@ def _web(tool: str, args: list[str]) -> dict:
             ok = False
             continue
         m = URL.match(h)
-        out.append(m.group(1) if m else re.split(r"[/:?#]", h.split("@")[-1])[0])
-    return {"list": "web", "hosts": out, "keys": [], "ok": ok and bool(out)}
+        out.append(m.group(1) if m else re.split(r"[/:?#$]", h.split("@")[-1])[0])
+    return {"list": "web", "hosts": out, "keys": [], "ok": ok and bool(out), "urls": hosts, "read_only": read_only}
+
+
+PRIVATE_HOST = re.compile(r"^(?:localhost|.*\.(?:local|internal|lan|localdomain|home|corp))$", re.IGNORECASE)
+
+
+def public_https(url: str) -> bool:
+    """A public web page without data in the URL (WebFetch "libre", RP10.2, and web "libre", RP13.2)."""
+    from urllib.parse import unquote, urlsplit
+    if not isinstance(url, str) or len(url) > 2000:
+        return False
+    try:
+        u = urlsplit(url.strip())
+        host, port = (u.hostname or "").lower().rstrip("."), u.port
+    except ValueError:
+        return False
+    if u.scheme.lower() != "https" or u.username or u.password or not host or "." not in host or "$" in url:
+        return False
+    if port not in (None, 443) or PRIVATE_HOST.match(host) or re.fullmatch(r"[\d.]+", host) or ":" in host:
+        return False   # an IP, a private name or another port: not a public web page
+    query = unquote(u.query)
+    if len(query) > 100 or any(len(v) > 64 for v in re.split(r"[&=]", query)):
+        return False   # data in the URL
+    return not any(len(p) > 100 for p in unquote(u.path).split("/"))
 
 
 def _nc(args: list[str]) -> dict:
@@ -310,29 +351,52 @@ def _ok(info: dict, allow: dict) -> bool:
     hosts = allow["web"] if info["list"] == "web" else allow["transfer"]
     if info["list"] == "nc" and not allow.get("allow_nc"):
         return False
-    return all(approved(h, hosts) for h in info["hosts"])
+    if all(approved(h, hosts) for h in info["hosts"]):
+        return True
+    # RP13.2 "libre": a plain read of public https pages, when the organization allows it
+    return bool(info["list"] == "web" and allow.get("web_free") and info.get("read_only") and info.get("urls")
+                and all(public_https(u) for u in info["urls"]))
+
+
+CAPTURE = re.compile(r"^(?:(?:do|then|else|local|export)\s+)*\w+=\$\((.*)$", re.DOTALL)
+KEY_ASSIGN = re.compile(r"^\$?\w+\s*=\s*[\"']?([^\"'\s]*[\\/]\.ssh[\\/][\w.-]+)[\"']?$")
+
+
+def _captured(segment: str) -> str | None:
+    """The command inside H=$(ssh host "cmd") (RP12.2): its output is kept here, so it counts as the command itself."""
+    m = CAPTURE.match(segment)
+    if not m:
+        return None
+    inner = m.group(1).rstrip()
+    if inner.endswith(")") and inner.count("(") < inner.count(")"):
+        inner = inner[:-1].rstrip()
+    return inner or None
 
 
 def strip_approved(command: str, allow) -> tuple[str, str]:
     """(text for the egress check, text for the secret-path check). An approved command leaves the egress text, and
-    its -i key leaves the secret text; everything else stays, so the usual rules still apply to it.
-    allow: load() result, or a set of transfer hosts."""
+    its -i key leaves the secret text (also a plain assignment of that key, RP12.5); everything else stays, so the
+    usual rules still apply to it. allow: load() result, or a set of transfer hosts."""
     if isinstance(allow, set):
         allow = {**empty(), "transfer": allow}
-    if not (allow["transfer"] or allow["web"]):
+    if not (allow["transfer"] or allow["web"] or allow.get("web_free")):
         return command, command
-    egress_parts, secret_parts = [], []
+    egress_parts, secret_parts, keys = [], [], set()
     for segment in segments(command):   # stripped: the egress rule anchors at the start
-        info = parse(segment)
-        if info and not runs_here(segment) and _ok(info, allow):
+        target = _captured(segment) or segment
+        info = parse(target)
+        if info and not runs_here(target) and _ok(info, allow):
             secret = segment
             for key in info["keys"]:
                 if re.search(r"[\\/]\.ssh[\\/]", key.replace("~", "/")):
                     secret = secret.replace(key, " ")
+                    keys.add(key.replace("\\", "/"))
             secret_parts.append(secret)
             continue
         egress_parts.append(segment)
         secret_parts.append(segment)
+    secret_parts = [p for p in secret_parts
+                    if not ((m := KEY_ASSIGN.match(p.strip())) and m.group(1).replace("\\", "/") in keys)]
     return "\n".join(egress_parts), "\n".join(secret_parts)
 
 

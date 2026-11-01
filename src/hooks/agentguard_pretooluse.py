@@ -48,7 +48,8 @@ FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SEARCH_TOOLS = {"Glob", "Grep"}   # Claude Code and Cowork: the folder and the file pattern (never the Grep regex)
 
-_START = r"(?:^|[;&|\n(`]\s*|\b(?:sudo|exec|xargs|env)\s+)"
+# do / then / else: a command inside a Bash loop or if (0.5.3; before, "for ...; do curl x; done" was not seen)
+_START = r"(?:^|[;&|\n(`]\s*|\b(?:sudo|exec|xargs|env|do|then|else|nohup|time|command)\s+)"
 EGRESS = re.compile(_START + r"(curl|wget|scp|sftp|ssh(?!-)|ftp|nc|ncat|netcat|invoke-webrequest|iwr|invoke-restmethod|irm"
                     r"|start-bitstransfer)(?:\.exe)?\b", re.IGNORECASE)
 WEBCLIENT = re.compile(r"new-object\s+(system\.)?net\.webclient", re.IGNORECASE)
@@ -76,12 +77,18 @@ def decide(event: dict, env=None, hosts=None, auto=None) -> tuple[str, str] | No
             return "deny", "AgentGuard: el agente no puede cambiar la lista de hosts aprobados (PM-02)."
         hosts = allowlist.load() if hosts is None else hosts
         # PowerShell escapes a quote inside "..." with a backtick (`"), the same as \" in Bash: read it that way so
-        # an approved ssh with a quoted remote command is not taken as a local command. $( ) and any other backtick
-        # still count as local execution. `$ is a literal $ in PowerShell (read as Bash's \$); a PowerShell \$( is a
-        # backslash followed by a real $( ), so a space keeps it local.
+        # an approved ssh with a quoted remote command is not taken as a local command. `$ is a literal $ (read as
+        # Bash's \$); a PowerShell \$( is a backslash followed by a real $( ), so a space keeps it local. Any other
+        # backtick only escapes the next character (`n, `( ), so only $( ) runs here (RP12.3).
+        cfg = autoallow.settings() if auto is None else auto
         parsed = command
         if tool == "PowerShell":
-            parsed = command.replace("\\$", "\\ $").replace('`"', '\\"').replace("`$", "\\$")
+            parsed = autoallow.powershell_literals(command)   # here-strings and backtick escapes (RP12.3)
+            parsed = parsed.replace("\\$", "\\ $").replace('`"', '\\"').replace("`$", "\\$")
+            parsed = re.sub(r"`(.)", r"\1", parsed)   # any other backtick only escapes the next character
+        else:
+            parsed = autoallow.strip_heredocs(parsed)   # python - <<'EOF' ... EOF: text for python, not shell (RP12)
+        parsed = autoallow.expand_literals(parsed)   # H=https://h ... $H/x, $k = "$HOME\.ssh\k" (RP12.4)
         egress_text, secret_text = allowlist.strip_approved(parsed, hosts)
         # A tool name inside quoted data (a regex, a message) is not a command (agentguard-plugin-allow RP3)
         match = EGRESS.search("\n".join(allowlist.mask_quotes(s) for s in egress_text.split("\n")))
@@ -95,13 +102,13 @@ def decide(event: dict, env=None, hosts=None, auto=None) -> tuple[str, str] | No
         if SECRET_PATH.search(secret_text):
             return "deny", "AgentGuard: el comando usa una ruta con secretos (PM-01)."
         # PM-03: a recursive delete of temporary or cache folders only does not ask (agentguard-plugin-allow RP2)
-        if autoallow.destructive(parsed, hosts) == "ask":
+        if autoallow.destructive(parsed, hosts, cfg.get("delete_paths", ())) == "ask":
             return "ask", "AgentGuard: comando destructivo. Confirmar solo si es intencional (PM-03)."
         if allowlist.ORG_LIST.search(command):   # after the deny checks, so it never hides one
             return "ask", ("AgentGuard: el comando usa un archivo de la organizacion (hosts aprobados o excepciones). "
                            "Para leerlo, usar la herramienta Read (PM-02).")
         # Explicit allow, only when the client turned it on (RP1); deny and ask rules of settings still apply
-        reason = autoallow.decide_allow(parsed, hosts, autoallow.settings() if auto is None else auto)
+        reason = autoallow.decide_allow(parsed, hosts, cfg)
         if reason:
             return "allow", reason
     elif tool in FILE_TOOLS:

@@ -26,11 +26,65 @@ ALWAYS_ASK = re.compile(r"git\s+push\s+(?:.*\s)?(?:--force|-f)\b|git\s+reset\s+-
 # rm -rf (not git rm: git keeps the files in its history) and Remove-Item -Recurse, as PM-03 asked before 0.5.0
 RECURSIVE_DELETE = re.compile(r"(?<!git )\brm\s+-[a-z]*(?:r[a-z]*f|f[a-z]*r)|remove-item\b.*-recurse", re.IGNORECASE)
 TEMP_PREFIX = re.compile(r"^(?:/tmp/|/var/tmp/|\$env:temp/|\$temp/|\$tmpdir/|\$env:tmp/|\$env:localappdata/temp/"
-                         r"|\$localappdata/temp/|[a-z]:/users/[^/]+/appdata/local/temp/)(?=.)", re.IGNORECASE)
+                         r"|\$localappdata/temp/|[a-z]:/users/[^/]+/appdata/local/temp/"
+                         r"|/[a-z]/users/[^/]+/appdata/local/temp/)(?=.)", re.IGNORECASE)   # /c/Users/...: Git Bash
+GIT_WORKTREE_META = re.compile(r"(?:^|/)\.git/worktrees/[\w.-]+/?$", re.IGNORECASE)   # git recreates it (RP12.6)
+FORBIDDEN_DELETE_ROOTS = {"/", "/opt", "/etc", "/usr", "/var", "/home", "/root", "/srv", "/bin", "/boot", "c:", "c:/windows",
+                          "c:/users", "c:/program files", "c:/programdata"}
+MAX_DELETE_PATHS = 20
+
+
+def valid_delete_path(path: str) -> bool:
+    """RP13.1: an absolute folder at least two levels deep, never a system root."""
+    p = str(path).strip().replace("\\", "/").rstrip("/").lower()
+    if not p or ".." in p or re.search(r"[*?$`]", p) or p in FORBIDDEN_DELETE_ROOTS:
+        return False
+    parts = [x for x in re.sub(r"^[a-z]:", "", p).split("/") if x]
+    return bool(re.match(r"^(?:/|[a-z]:/)", p)) and len(parts) >= 2
+
+
+def powershell_literals(command: str) -> str:
+    """Here-strings as ordinary quoted text: @'...'@ is literal, @"..."@ keeps $( ) active (RP12.3)."""
+    command = re.sub(r"@'\r?\n(.*?)\r?\n'@", lambda m: "'" + m.group(1).replace("'", '"') + "'", command, flags=re.DOTALL)
+    return re.sub(r'@"\r?\n(.*?)\r?\n"@', lambda m: '"' + m.group(1).replace('"', "'") + '"', command, flags=re.DOTALL)
+
+
+HEREDOC = re.compile(r"<<-?\s*(['\"])(\w+)\1([^\n]*)\n(.*?)\n\s*\2[ \t]*(?=\n|$)", re.DOTALL)
+SHELL_READERS = re.compile(r"(?:^|[\s;&|(])(?:bash|sh|zsh|dash|ksh|ssh|sudo|pwsh|powershell|eval|source|xargs)\b\S*\s[^\n<]*$|"
+                           r"(?:^|[\s;&|(])(?:bash|sh|zsh|dash|ksh|ssh|sudo|pwsh|powershell)\s*$")
+
+
+def strip_heredocs(command: str) -> str:
+    """Bash: the body of a heredoc with a quoted delimiter (<<'EOF') is text for the program that reads it (python,
+    cat), not shell: it is left out, unless that program is a shell or ssh (it would run the body) (RP12)."""
+    def repl(m):
+        before = command[:m.start()].rsplit("\n", 1)[-1]
+        return m.group(0) if SHELL_READERS.search(before) else "<<" + m.group(1) + m.group(2) + m.group(1) + m.group(3)
+    return HEREDOC.sub(repl, command)
+
+
+LITERAL_VALUE = re.compile(r"^[\w.:/@~\\%+=,-]+$")
+
+
+def expand_literals(command: str) -> str:
+    """$H, ${H} and $H/... replaced by the value of a plain assignment of the same command (H=https://h,
+    $k = "$HOME\\.ssh\\k"); $HOME and $env:USERPROFILE read as ~ (RP12.4). Anything else stays as it is."""
+    text = re.sub(r"\$(?:\{HOME\}|HOME\b|env:USERPROFILE\b)", "~", command, flags=re.IGNORECASE)
+    names = {k: v for k, v in _assignments(text).items() if LITERAL_VALUE.match(v)}
+    if not names:
+        return text
+    pattern = re.compile(r"\$\{?(" + "|".join(re.escape(k) for k in sorted(names, key=len, reverse=True)) +
+                         r")\}?(?!\w)(?!\s*=(?!=))", re.IGNORECASE)   # never the name being assigned ($k = ...)
+    out = []
+    for seg_text in re.split(r"(\n)", text):
+        out.append(pattern.sub(lambda m: names[m.group(1).lower()], seg_text))
+    return "".join(out)
+
+
 READ_ONLY = {"select-object", "select", "select-string", "sls", "where-object", "sort-object", "sort", "measure-object",
              "measure", "out-string", "out-null", "format-table", "ft", "format-list", "fl", "grep", "head", "tail",
              "wc", "cut", "uniq"}
-SHELL_WORDS = {"do", "then", "else", "{", "}"}
+SHELL_WORDS = {"do", "then", "else", "{", "}", "try", "finally"}   # try { Remove-Item ... } (PowerShell)
 RM_SWITCHES = {"-recurse", "-force", "-confirm:$false", "-whatif", "-verbose"}
 RM_VALUED = {"-path", "-literalpath", "-erroraction", "-ea", "-include", "-exclude", "-filter"}
 HARMLESS_REDIRECT = re.compile(r"\d?\*?&?>>?\s*(?:&\d|/dev/null|\$null)", re.IGNORECASE)
@@ -70,32 +124,17 @@ def decide_doc_allow(path: str, cwd: str, cfg: dict) -> str | None:
 
 WEBFETCH_MODES = ("off", "lista", "libre")
 MAX_WEBFETCH_DOMAINS = 100
-PRIVATE_HOST = re.compile(r"^(?:localhost|.*\.(?:local|internal|lan|localdomain|home|corp))$", re.IGNORECASE)
 
 
 def decide_webfetch(url: str, cfg: dict) -> str | None:
     """RP10: the reason of an explicit allow for a WebFetch, or None (Claude Code asks as usual). Never a deny."""
     mode = cfg.get("webfetch")
-    if mode not in ("lista", "libre") or not isinstance(url, str) or len(url) > 2000:
-        return None
-    from urllib.parse import unquote, urlsplit
-    try:
-        u = urlsplit(url.strip())
-        host = (u.hostname or "").lower().rstrip(".")
-        port = u.port
-    except ValueError:
-        return None
-    if u.scheme.lower() != "https" or u.username or u.password or not host or "." not in host:
-        return None
-    if port not in (None, 443) or PRIVATE_HOST.match(host) or re.fullmatch(r"[\d.]+", host) or ":" in host:
-        return None   # an IP, a private name or another port: not a public web page
-    query = unquote(u.query)
-    if len(query) > 100 or any(len(v) > 64 for v in re.split(r"[&=]", query)):
-        return None   # data in the URL
-    if any(len(p) > 100 for p in unquote(u.path).split("/")):
+    if mode not in ("lista", "libre") or not allowlist.public_https(url):   # same guard as web "libre" (RP13.2)
         return None
     if any(w in url.lower() for w in cfg.get("never", [])):
         return None
+    from urllib.parse import urlsplit
+    host = (urlsplit(url.strip()).hostname or "").lower().rstrip(".")
     if mode == "lista" and not allowlist.approved(host, set(cfg.get("webfetch_domains", []))):
         return None
     return f"AgentGuard: aprobado por la politica de la organizacion (WebFetch {'de la lista' if mode == 'lista' else 'con resguardo'})."
@@ -108,7 +147,7 @@ def _words(raw, default) -> list[str]:
 def settings(path: Path | None = None) -> dict:
     """The explicit-allow parameters of the organization's baseline; everything "off" when it cannot be read."""
     off = {"mode": "off", "prefixes": [], "never": list(NEVER_DEFAULT), "edits": "docs", "webfetch": "off",
-           "webfetch_domains": []}
+           "webfetch_domains": [], "delete_paths": []}
     try:
         params = json.loads((path or allowlist.baseline_path()).read_text(encoding="utf-8"))["data"]["params"]
     except (OSError, ValueError, KeyError, TypeError):
@@ -116,6 +155,10 @@ def settings(path: Path | None = None) -> dict:
     if not isinstance(params, dict):
         return off
     out = dict(off, never=_words(params.get("agentguard_never_allow"), NEVER_DEFAULT))
+    raw = params.get("agentguard_delete_paths")   # RP13.1: folders where deletes do not ask, never a system root
+    out["delete_paths"] = [p.strip().replace("\\", "/").rstrip("/").lower() + "/" for p in raw
+                           if isinstance(p, str) and valid_delete_path(p)
+                           and not any(w in p.lower() for w in out["never"])][:MAX_DELETE_PATHS] if isinstance(raw, list) else []
     if params.get("agentguard_webfetch") in WEBFETCH_MODES:
         out["webfetch"] = params["agentguard_webfetch"]
         out["webfetch_domains"] = sorted(allowlist._hosts(params.get("agentguard_webfetch_domains")))[:MAX_WEBFETCH_DOMAINS]
@@ -133,6 +176,10 @@ def _assignments(command: str) -> dict:
     """Simple variables set in the same command: $S = "..."; $p = Join-Path $S 'x'; S="..." (Bash)."""
     out = {}
     for seg in allowlist.segments(command):
+        m = re.match(r"^(\w+)=\$\(mktemp\b[^)`$]*\)$", seg)
+        if m:   # T=$(mktemp -d ...): a new temporary folder (RP12.6)
+            out[m.group(1).lower()] = "/tmp/mktemp"
+            continue
         try:
             tokens = allowlist.tokenize(seg)
         except ValueError:
@@ -155,14 +202,18 @@ def _expand(value: str, names: dict) -> str:
     return value
 
 
-def is_temp(target: str, names: dict, base: str = "") -> bool:
-    """base: the folder of the last absolute `cd` of the same command; a relative target is resolved against it (RP8)."""
+def is_temp(target: str, names: dict, base: str = "", extra=()) -> bool:
+    """base: the folder of the last absolute `cd` of the same command; a relative target is resolved against it (RP8).
+    extra: the client's folders where deletes do not ask (agentguard_delete_paths, RP13.1)."""
     t = _expand(target, names).replace("\\", "/").strip()
     if t and base and not re.match(r"^(?:/|[a-zA-Z]:|\$|~)", t):
         t = base.rstrip("/") + "/" + t
     if not t or ".." in t:
         return False
-    return bool(TEMP_PREFIX.match(t)) or t.rstrip("/").split("/")[-1].lower() == "__pycache__"
+    if TEMP_PREFIX.match(t) or t.rstrip("/").split("/")[-1].lower() == "__pycache__" or GIT_WORKTREE_META.search(t):
+        return True
+    low = t.lower().rstrip("/")
+    return any(low.startswith(p) and len(low) > len(p) for p in extra)
 
 
 REDIRECT = re.compile(r"^\d*&?(?:>>?|<)")
@@ -205,6 +256,11 @@ def _delete_targets(seg: str) -> list[str] | None:
         tokens = tokens[1:]
     tool, args = allowlist._tool(tokens)
     args = _drop_redirects(args)
+    if tool == "docker" and args[:1] == ["exec"]:   # docker exec [-it] <container> rm -rf /tmp/x: the rm inside it
+        rest = args[1:]
+        while rest and rest[0].startswith("-"):
+            rest = rest[2:] if rest[0] in ("-u", "--user", "-w", "--workdir", "-e", "--env") else rest[1:]
+        tool, args = allowlist._tool(rest[1:]) if len(rest) > 1 else ("", [])
     if tool == "rm":
         return [a for a in args if not a.startswith("-")]
     if tool in ("remove-item", "ri"):
@@ -229,22 +285,22 @@ def _delete_targets(seg: str) -> list[str] | None:
     return None
 
 
-def _segment_delete(seg: str, names: dict, base: str = "") -> str | None:
+def _segment_delete(seg: str, names: dict, base: str = "", extra=()) -> str | None:
     """"temp", "ask" or None (no recursive delete in this segment). Quoted data (a commit message) does not count;
     quoted text that runs (bash -c "rm -rf x") does."""
     bare = allowlist.unquoted(seg)
     if not RECURSIVE_DELETE.search(seg if allowlist.EXECUTES_TEXT.search(bare) else bare):
         return None
     targets = _delete_targets(seg)
-    return "temp" if targets and all(is_temp(t, names, base) for t in targets) else "ask"
+    return "temp" if targets and all(is_temp(t, names, base, extra) for t in targets) else "ask"
 
 
-def _deletes(parts: list[str], names: dict) -> list[tuple[str, str | None]]:
+def _deletes(parts: list[str], names: dict, extra=()) -> list[tuple[str, str | None]]:
     """(segment, delete kind) of consecutive segments, following the last absolute cd (RP8)."""
     out, base = [], ""
     for p in parts:
         base = _cd_target(p) or base
-        out.append((p, _segment_delete(p, names, base)))
+        out.append((p, _segment_delete(p, names, base, extra)))
     return out
 
 
@@ -260,18 +316,18 @@ def _allow(hosts) -> dict:
     return {**allowlist.empty(), "transfer": hosts} if isinstance(hosts, set) else hosts
 
 
-def destructive(command: str, hosts) -> str | None:
-    """PM-03: "ask", "temp" (every recursive delete is temporary) or None (nothing destructive)."""
+def destructive(command: str, hosts, extra=()) -> str | None:
+    """PM-03: "ask", "temp" (every recursive delete is temporary or in a client folder of `extra`) or None."""
     if ALWAYS_ASK.search(command):
         return "ask"
     found, local = [], []
     for seg in allowlist.segments(command):
         remote = _remote(seg, hosts)
         if remote is not None:
-            found += [k for _p, k in _deletes(allowlist.segments(remote), _assignments(remote)) if k]
+            found += [k for _p, k in _deletes(allowlist.segments(remote), _assignments(remote), extra) if k]
         else:
             local.append(seg)
-    found += [k for _p, k in _deletes(local, _assignments(command)) if k]
+    found += [k for _p, k in _deletes(local, _assignments(command), extra) if k]
     if not found:
         return None
     return "ask" if "ask" in found else "temp"
@@ -284,7 +340,7 @@ def decide_allow(command: str, hosts, cfg: dict) -> str | None:
     if any(w in command.lower() for w in cfg.get("never", [])):
         return None
     names, kinds = _assignments(command), set()
-    temp_deletes = {p for p, k in _deletes(allowlist.segments(command), names) if k == "temp"}
+    temp_deletes = {p for p, k in _deletes(allowlist.segments(command), names, cfg.get("delete_paths", ())) if k == "temp"}
     for seg in allowlist.segments(command):
         if re.match(r"^(?:cd|set-location|pushd)\s+(?:\"[^\"$`]*\"|'[^']*'|[^\s;&|$`]+)$", seg, re.IGNORECASE):
             continue   # cd to a folder: changes nothing by itself
