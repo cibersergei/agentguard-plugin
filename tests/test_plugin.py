@@ -23,8 +23,12 @@ def file_op(path, tool="Read"):
     return {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"file_path": path}}
 
 
+OFF = hook.autoallow.settings(ROOT / "tests" / "no-such-baseline.json")   # explicit allow off, whatever this machine has
+
+
 def decision(event):
-    result = hook.decide(event, hosts=set())   # no approved hosts: never the real baseline.json of this machine
+    # no approved hosts and no explicit allow: never the real baseline.json of this machine
+    result = hook.decide(event, hosts=set(), auto=OFF)
     return result[0] if result else None
 
 

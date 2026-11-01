@@ -92,6 +92,11 @@ class HeredocAndBlocksTest(unittest.TestCase):
     def test_try_block_and_docker_exec(self):
         self.assertIsNone(decide("try { Remove-Item '.git\\worktrees\\wt-ai' -Recurse -Force -Confirm:$false -ErrorAction Stop; "
                                  "'ok' } catch { 'pendiente' }", tool="PowerShell"))
+        # 0.5.4: the whole try/catch on one line, without ";" (the "}" ends the Remove-Item arguments)
+        self.assertIsNone(decide("try { Remove-Item '.git\\worktrees\\wt-ai' -Recurse -Force -ErrorAction Stop } catch { 'x' }",
+                                 tool="PowerShell"))
+        self.assertEqual(decide("try { Remove-Item 'src' -Recurse -Force } catch { 'x' }", tool="PowerShell"), "ask",
+                         "a real delete inside try still asks")
         self.assertIsNone(decide(SSH + '"sudo docker exec \\$C rm -rf /tmp/diag_humand /tmp/diag.py"'))
         self.assertEqual(decide(SSH + '"sudo docker exec \\$C rm -rf /app/data"'), "ask")
 

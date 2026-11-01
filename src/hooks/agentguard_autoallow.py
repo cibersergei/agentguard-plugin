@@ -256,6 +256,8 @@ def _delete_targets(seg: str) -> list[str] | None:
         tokens = tokens[1:]
     tool, args = allowlist._tool(tokens)
     args = _drop_redirects(args)
+    if "}" in args:   # try { Remove-Item x -Recurse } catch { ... } on one line: the block ends at "}" (0.5.4)
+        args = args[:args.index("}")]
     if tool == "docker" and args[:1] == ["exec"]:   # docker exec [-it] <container> rm -rf /tmp/x: the rm inside it
         rest = args[1:]
         while rest and rest[0].startswith("-"):
