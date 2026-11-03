@@ -14,6 +14,7 @@ _spec.loader.exec_module(hook)
 allowlist = hook.allowlist
 
 HOSTS = {"203.0.113.10", "genia-ec2", "*.cliente.com"}
+REAL_BASELINE_PATH = allowlist.baseline_path   # before setUpModule replaces it
 _NO_BASELINE = mock.patch.object(allowlist, "baseline_path", return_value=Path(tempfile.gettempdir()) / "no-agentguard" / "x.json")
 
 
@@ -226,6 +227,14 @@ class LoadTest(unittest.TestCase):
             for management, expected in [("org", {"a.example"}), ("self", {"a.example", "mio.example"})]:
                 p = self.write(tmp, {"version": 1, "data": {"egress": {"transfer_hosts": ["a.example"], "management": management}}})
                 self.assertEqual(allowlist.load(p, home=home)["transfer"], expected, management)
+
+    @unittest.skipIf(allowlist.os.name == "nt", "the POSIX locations are checked on the Linux and macOS CI runners")
+    def test_baseline_location_on_linux_and_macos(self):
+        """0.5.5: Linux and WSL2 read the file the verifier writes (check/agentguard_check/baseline_store.py)."""
+        with mock.patch.object(allowlist.sys, "platform", "linux"):
+            self.assertEqual(REAL_BASELINE_PATH().as_posix(), "/var/lib/agentguard-baseline/baseline.json")
+        with mock.patch.object(allowlist.sys, "platform", "darwin"):
+            self.assertEqual(REAL_BASELINE_PATH().as_posix(), "/Library/Application Support/AgentGuard Baseline/baseline.json")
 
 
 

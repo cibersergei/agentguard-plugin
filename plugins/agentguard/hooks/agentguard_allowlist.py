@@ -62,6 +62,8 @@ PS_SWITCHES = {"-usebasicparsing", "-usedefaultcredentials", "-skipcertificatech
 def baseline_path() -> Path:
     if sys.platform == "darwin":
         return Path("/Library/Application Support/AgentGuard Baseline/baseline.json")
+    if os.name != "nt":   # Linux and WSL2: same file the verifier writes (check/agentguard_check/baseline_store.py)
+        return Path("/var/lib/agentguard-baseline/baseline.json")
     return Path(os.environ.get("ProgramData") or r"C:\ProgramData") / "AgentGuard" / "baseline.json"
 
 
