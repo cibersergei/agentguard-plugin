@@ -30,7 +30,6 @@
       "Bash(sudo *)"
     ],
     "allow": [
-      "WebFetch(domain:<dominio-aprobado>)",
       "Bash(git status *)",
       "Bash(git diff *)",
       "Bash(git log *)",
@@ -48,11 +47,7 @@
   "allowManagedPermissionRulesOnly": true,
   "allowManagedHooksOnly": true,
   "allowManagedMcpServersOnly": true,
-  "allowedMcpServers": [
-    {
-      "serverName": "<server-aprobado>"
-    }
-  ],
+  "allowedMcpServers": [],
   "enableAllProjectMcpServers": false,
   "strictKnownMarketplaces": [
     {
@@ -78,9 +73,6 @@
     "mcp"
   ],
   "forceLoginMethod": "claudeai",
-  "forceLoginOrgUUID": [
-    "<uuid-de-la-organizacion>"
-  ],
   "requiredMinimumVersion": "2.1.179",
   "cleanupPeriodDays": 30,
   "desktopSessionCleanupPeriodDays": 30,
@@ -93,7 +85,9 @@
     "allowUnsandboxedCommands": false,
     "network": {
       "allowedDomains": [
-        "<dominio-aprobado>"
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org"
       ],
       "allowManagedDomainsOnly": true
     },
